@@ -32,6 +32,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
+#include "compat.h"
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "options.h"
