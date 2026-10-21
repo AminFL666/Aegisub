@@ -113,12 +113,6 @@ class VideoController final : public wxEvtHandler {
 
 	void RequestFrame();
 
-	/// @brief Reload the subtitles shown in the video
-	///
-	/// When an original subtitle is open it is rendered on top of the video
-	/// together with the current file, using the "Original" style.
-	void ReloadSubtitles();
-
 public:
 	VideoController(agi::Context *context);
 
@@ -127,6 +121,12 @@ public:
 
 	/// Get the current frame number
 	int GetFrameN() const { return frame_n; }
+
+	/// @brief Reload the subtitles shown in the video
+	///
+	/// When an original subtitle is open it is rendered on top of the video
+	/// together with the current file, using the "Original" style.
+	void ReloadSubtitles();
 
 	/// Get the actual aspect ratio from a predefined AR type
 	double GetARFromType(AspectRatio type) const;

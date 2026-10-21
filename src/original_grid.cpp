@@ -49,6 +49,7 @@
 #include <wx/intl.h>
 #include <wx/scrolbar.h>
 #include <wx/settings.h>
+#include <wx/sizer.h>
 
 namespace {
 enum {

@@ -780,13 +780,13 @@ void SubsEditBox::SetTextDirection(bool rtl) {
 	if (rtl) {
 		sizer->Show(edit_ctrl, false);
 		sizer->Show(rtl_edit, true);
-		context->textSelectionController->SetControl(nullptr);
+		c->textSelectionController->SetControl(nullptr);
 		rtl_edit->SetFocus();
 	}
 	else {
 		sizer->Show(rtl_edit, false);
 		sizer->Show(edit_ctrl, true);
-		context->textSelectionController->SetControl(edit_ctrl);
+		c->textSelectionController->SetControl(edit_ctrl);
 		edit_ctrl->SetFocus();
 	}
 

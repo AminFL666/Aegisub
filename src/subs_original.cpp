@@ -505,7 +505,7 @@ std::unique_ptr<AssFile> OriginalSubsController::MakePreviewFile() const {
 	EnsureStyleIn(*merged);
 
 	for (auto const& line : file->Events)
-		merged->Events.push_back(AssDialogue(line));
+		merged->Events.push_back(*new AssDialogue(line));
 
 	return merged;
 }
