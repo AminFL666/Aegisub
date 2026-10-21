@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "rtl.h"
 #include "tooltip_binding.h"
 
 #include <array>
@@ -135,6 +136,40 @@ class SubsEditBox final : public wxPanel {
 	/// eliminate the negative durations
 	boost::container::map<AssDialogue *, std::pair<agi::Time, agi::Time>> initial_times;
 
+	/// Is the text edit box currently editing the original subtitle?
+	bool editing_original = false;
+
+	/// Direction currently used by the text editor
+	bool rtl_mode = false;
+
+	/// Direction of the current file, used for lines with no strong characters
+	rtl::Direction current_file_direction = rtl::Direction::LTR;
+
+	/// Buttons which only make sense for the current file
+	std::vector<wxWindow *> current_only_buttons;
+
+	/// @brief The original line paired with the active line, or nullptr
+	AssDialogue *OriginalLine() const;
+
+	/// @brief Put the text of the active line into the editor
+	void RefreshEditorText();
+
+	/// @brief Show the right text editor for the text being edited
+	/// @param rtl True to use the right-to-left editor
+	void SetTextDirection(bool rtl);
+
+	/// @brief Replace the contents of the active editor
+	void SetEditorText(std::string const& text);
+
+	/// @brief The contents of the active editor as raw ASS text
+	std::string GetEditorText() const;
+
+	/// @brief Enable or disable the controls which only apply to the current file
+	void ApplyOriginalReadOnly(bool original);
+
+	void OnRtlEdit(wxCommandEvent &event);
+	void OnOriginalSubsChanged();
+
 	// Constructor helpers
 	wxTextCtrl *MakeMarginCtrl(wxString const& tooltip, int margin, wxString const& commit_msg);
 	TimeEdit *MakeTimeCtrl(wxString const& tooltip, TimeField field);
@@ -203,6 +238,7 @@ class SubsEditBox final : public wxPanel {
 	void SetDurationField();
 
 	SubsTextEditCtrl *edit_ctrl;
+	wxTextCtrl *rtl_edit;
 	wxTextCtrl *secondary_editor;
 
 public:
@@ -210,4 +246,11 @@ public:
 	/// @param parent Parent window
 	SubsEditBox(wxWindow *parent, agi::Context *context);
 	~SubsEditBox();
+
+	/// @brief Edit the current file or the original subtitle
+	/// @param original True to send text edits to the original subtitle
+	void SetEditingOriginal(bool original);
+
+	/// Is the text edit box editing the original subtitle?
+	bool IsEditingOriginal() const { return editing_original; }
 };

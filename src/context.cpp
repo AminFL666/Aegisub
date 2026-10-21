@@ -26,6 +26,7 @@
 #include "search_replace_engine.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subs_original.h"
 #include "text_selection_controller.h"
 #include "video_controller.h"
 
@@ -44,6 +45,7 @@ Context::Context()
 , initialLineState(std::make_unique<InitialLineState>(this))
 , search(std::make_unique<SearchReplaceEngine>(this))
 , path(std::make_unique<Path>(*config::path))
+, originalSubs(std::make_unique<OriginalSubsController>(this))
 , dialog(std::make_unique<DialogManager>())
 {
 	subsController->SetSelectionController(selectionController.get());

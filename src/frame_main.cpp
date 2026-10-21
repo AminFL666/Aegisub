@@ -50,9 +50,11 @@
 #include "libresrc/libresrc.h"
 #include "main.h"
 #include "options.h"
+#include "original_grid.h"
 #include "project.h"
 #include "subs_controller.h"
 #include "subs_edit_box.h"
+#include "subs_original.h"
 #include "utils.h"
 #include "version.h"
 #include "video_box.h"
@@ -60,11 +62,14 @@
 #include "video_display.h"
 
 #include <libaegisub/dispatch.h>
+
+#include <algorithm>
 #include <libaegisub/log.h>
 
 #include <wx/dnd.h>
 #include <wx/msgdlg.h>
 #include <wx/sizer.h>
+#include <wx/splitter.h>
 #include <wx/statline.h>
 #include <wx/sysopt.h>
 #include <wx/toolbar.h>
@@ -187,8 +192,23 @@ void FrameMain::InitContents() {
 	StartupLog("Create background panel");
 	auto Panel = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
 
+	StartupLog("Create subtitles splitter");
+	subsSplitter = new wxSplitterWindow(Panel, -1, wxDefaultPosition, wxDefaultSize,
+		wxSP_LIVE_UPDATE | wxSP_3DSASH | wxSP_NOBORDER);
+	subsSplitter->SetMinimumPaneSize(FromDIP(80));
+	subsSplitter->SetSashGravity(0.5);
+
 	StartupLog("Create subtitles grid");
-	context->subsGrid = new BaseGrid(Panel, context.get());
+	context->subsGrid = new BaseGrid(subsSplitter, context.get());
+
+	StartupLog("Create original subtitles grid");
+	context->originalGrid = new OriginalGrid(subsSplitter, context.get());
+
+	subsSplitter->Initialize(context->subsGrid);
+	subsSplitter->Bind(wxEVT_SPLITTER_SASH_POS_CHANGED, [this](wxSplitterEvent& evt) {
+		OPT_SET("Subtitle/Original Subtitle/Sash Position")->SetInt(evt.GetSashPosition());
+		evt.Skip();
+	});
 
 	StartupLog("Create video box");
 	videoBox = new VideoBox(Panel, false, context.get());
@@ -198,6 +218,7 @@ void FrameMain::InitContents() {
 
 	StartupLog("Create subtitle editing box");
 	auto EditBox = new SubsEditBox(Panel, context.get());
+	context->subsEditBox = EditBox;
 
 	StartupLog("Arrange main sizers");
 	ToolsSizer = new wxBoxSizer(wxVERTICAL);
@@ -209,12 +230,51 @@ void FrameMain::InitContents() {
 	MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
 	MainSizer->Add(TopSizer,0,wxEXPAND,0);
-	MainSizer->Add(context->subsGrid,1,wxEXPAND,0);
+	MainSizer->Add(subsSplitter,1,wxEXPAND,0);
 	Panel->SetSizer(MainSizer);
 
 	StartupLog("Perform layout");
 	Layout();
 	StartupLog("Leaving InitContents");
+}
+
+void FrameMain::ShowOriginalPane(bool show) {
+	if (!subsSplitter)
+		return;
+
+	if (show) {
+		if (subsSplitter->IsSplit())
+			return;
+
+		int width = subsSplitter->GetSize().GetWidth();
+		int minimum = FromDIP(80);
+
+		if (width < minimum * 2) {
+			// Too narrow to pick a sensible position for the sash
+			subsSplitter->SplitVertically(context->subsGrid, context->originalGrid);
+		}
+		else {
+			int position = OPT_GET("Subtitle/Original Subtitle/Sash Position")->GetInt();
+			if (position <= minimum || position >= width - minimum)
+				position = width * 55 / 100;
+
+			subsSplitter->SplitVertically(context->subsGrid, context->originalGrid, position);
+		}
+	}
+	else {
+		SaveOriginalPaneSize();
+		subsSplitter->Unsplit(context->originalGrid);
+	}
+
+	subsSplitter->Layout();
+	Layout();
+}
+
+void FrameMain::SaveOriginalPaneSize() {
+	if (!subsSplitter || !subsSplitter->IsSplit())
+		return;
+
+	OPT_SET("Subtitle/Original Subtitle/Sash Position")->SetInt(subsSplitter->GetSashPosition());
 }
 
 void FrameMain::SetDisplayMode(int video, int audio) {
@@ -320,6 +380,14 @@ void FrameMain::OnCloseWindow(wxCloseEvent &event) {
 		event.Veto();
 		return;
 	}
+
+	// Ask about the original subtitle too
+	if (!context->originalSubs->TryToClose()) {
+		event.Veto();
+		return;
+	}
+
+	SaveOriginalPaneSize();
 
 	context->dialog.reset();
 

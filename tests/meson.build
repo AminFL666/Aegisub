@@ -41,6 +41,7 @@ tests_src = [
     'tests/signals.cpp',
     'tests/split.cpp',
     'tests/syntax_highlight.cpp',
+    'tests/text_direction.cpp',
     'tests/thesaurus.cpp',
     'tests/time.cpp',
     'tests/type_name.cpp',

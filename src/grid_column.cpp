@@ -21,6 +21,7 @@
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
+#include "rtl.h"
 #include "video_controller.h"
 
 #include <libaegisub/character_count.h>
@@ -364,6 +365,25 @@ public:
 	COLUMN_HEADER(_("Text"))
 	COLUMN_DESCRIPTION(_("Text"))
 	bool Centered() const override { return false; }
+
+	/// Right-align the text of right-to-left lines so that the grid reads the
+	/// same way as the subtitles do
+	void Paint(wxDC &dc, int x, int y, const AssDialogue *d, const agi::Context *c) const override {
+		wxString str = Value(d, c);
+		if (rtl::IsRTL(d->Text.get())) {
+			int available = width - 8;
+			if (dc.GetTextExtent(str).GetWidth() > available) {
+				dc.SetClippingRegion(x, y, width, dc.GetCharHeight() + 4);
+				dc.DrawText(str, x + 4, y + 2);
+				dc.DestroyClippingRegion();
+				return;
+			}
+			dc.DrawText(str, x + width - 4 - dc.GetTextExtent(str).GetWidth(), y + 2);
+			return;
+		}
+
+		dc.DrawText(str, x + 4, y + 2);
+	}
 	bool CanHide() const override { return false; }
 	bool RefreshOnTextChange() const override { return true; }
 

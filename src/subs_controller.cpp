@@ -29,6 +29,7 @@
 #include "options.h"
 #include "project.h"
 #include "selection_controller.h"
+#include "subs_original.h"
 #include "subtitle_format.h"
 #include "text_selection_controller.h"
 
@@ -253,6 +254,11 @@ int SubsController::TryToClose(bool allow_cancel) const {
 }
 
 void SubsController::AutoSave() {
+	// The original subtitle has its own unsaved state and follows the same
+	// autosave schedule as the current file
+	if (context->originalSubs && context->originalSubs->IsOpen() && context->originalSubs->IsModified())
+		context->originalSubs->AutoSave();
+
 	if (commit_id == autosaved_commit_id)
 		return;
 

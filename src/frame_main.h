@@ -39,6 +39,7 @@ class AegisubApp;
 class AsyncVideoProvider;
 class AudioBox;
 class VideoBox;
+class wxSplitterWindow;
 namespace agi { class AudioProvider; }
 namespace agi { struct Context; class OptionValue; }
 
@@ -77,6 +78,8 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
 	AudioBox *audioBox;      ///< The audio area
 	VideoBox *videoBox;      ///< The video area
 
+	wxSplitterWindow *subsSplitter = nullptr; ///< Splits the current and original subtitles
+
 	wxSizer *MainSizer;  ///< Arranges things from top to bottom in the window
 	wxSizer *TopSizer;   ///< Arranges video box and tool box from left to right
 	wxSizer *ToolsSizer; ///< Arranges audio and editing areas top to bottom
@@ -84,6 +87,13 @@ class FrameMain : public wxFrame, private agi::signal::ConnectionScope {
 public:
 	FrameMain();
 	~FrameMain();
+
+	/// @brief Show or hide the original subtitle pane
+	/// @param show True to show the pane, false to hide it
+	void ShowOriginalPane(bool show);
+
+	/// Save the position of the original subtitle pane
+	void SaveOriginalPaneSize();
 
 	/// Set the status bar text
 	/// @param text New status bar text

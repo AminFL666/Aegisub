@@ -19,6 +19,11 @@
 #include <wx/stc/stc.h>
 
 void TextSelectionController::SetControl(wxStyledTextCtrl *ctrl) {
+	// The control can change when the edit box switches to the right-to-left
+	// editor, so make sure the old one stops reporting its selection
+	if (this->ctrl && this->ctrl != ctrl)
+		this->ctrl->Unbind(wxEVT_STC_UPDATEUI, &TextSelectionController::UpdateUI, this);
+
 	this->ctrl = ctrl;
 	if (ctrl)
 		ctrl->Bind(wxEVT_STC_UPDATEUI, &TextSelectionController::UpdateUI, this);

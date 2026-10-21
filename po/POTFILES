@@ -65,6 +65,7 @@ src/hotkey.cpp
 src/main.cpp
 src/menu.cpp
 src/mkv_wrap.cpp
+src/original_grid.cpp
 src/preferences_base.cpp
 src/preferences.cpp
 src/project.cpp
@@ -73,6 +74,7 @@ src/search_replace_engine.cpp
 src/subs_controller.cpp
 src/subs_edit_box.cpp
 src/subs_edit_ctrl.cpp
+src/subs_original.cpp
 src/subtitle_format.cpp
 src/subtitle_format_ebu3264.cpp
 src/subtitles_provider_libass.cpp

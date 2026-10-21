@@ -41,10 +41,12 @@
 #include "../libresrc/libresrc.h"
 #include "../main.h"
 #include "../options.h"
+#include "../original_grid.h"
 #include "../project.h"
 #include "../search_replace_engine.h"
 #include "../selection_controller.h"
 #include "../subs_controller.h"
+#include "../subs_original.h"
 #include "../subtitle_format.h"
 #include "../utils.h"
 #include "../video_controller.h"
@@ -390,6 +392,106 @@ struct subtitle_save_as final : public Command {
 	}
 };
 
+/// Save the original subtitle, asking for a filename the first time
+void save_original(agi::Context *c, bool always_ask) {
+	if (!c->originalSubs->IsOpen())
+		return;
+
+	try {
+		if (always_ask || c->originalSubs->Filename().empty())
+			c->originalSubs->SaveAs();
+		else
+			c->originalSubs->Save();
+	}
+	catch (const agi::Exception& err) {
+		wxMessageBox(to_wx(err.GetMessage()), _("Error"), wxOK | wxICON_ERROR | wxCENTER, c->parent);
+	}
+	catch (...) {
+		wxMessageBox(_("Unknown error"), _("Error"), wxOK | wxICON_ERROR | wxCENTER, c->parent);
+	}
+}
+
+struct original_open final : public Command {
+	CMD_NAME("original/open")
+	STR_MENU("&Open Original Subtitle")
+	STR_DISP("Open Original Subtitle")
+	STR_HELP("Open a subtitle file to use as the original text next to the current subtitles")
+
+	void operator()(agi::Context *c) override {
+		if (!c->originalSubs->TryToClose())
+			return;
+
+		auto filename = OpenFileSelector(c, _("Open Original Subtitle File"),
+			"Path/Last/Original Subtitles", "", "", SubtitleFormat::GetWildcards(0), c->parent);
+		if (filename.empty())
+			return;
+
+		try {
+			c->originalSubs->Open(filename);
+		}
+		catch (const agi::Exception& err) {
+			wxMessageBox(to_wx(err.GetMessage()), _("Error"), wxOK | wxICON_ERROR | wxCENTER, c->parent);
+			return;
+		}
+
+		c->frame->ShowOriginalPane(true);
+		if (c->originalGrid)
+			c->originalGrid->Refresh(false);
+	}
+};
+
+struct original_close final : public Command {
+	CMD_NAME("original/close")
+	STR_MENU("&Close Original Subtitle")
+	STR_DISP("Close Original Subtitle")
+	STR_HELP("Close the original subtitle and hide the original subtitle pane")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	void operator()(agi::Context *c) override {
+		if (!c->originalSubs->TryToClose())
+			return;
+
+		c->originalSubs->Close();
+		c->frame->ShowOriginalPane(false);
+	}
+
+	bool Validate(const agi::Context *c) override {
+		return c->originalSubs->IsOpen();
+	}
+};
+
+struct original_save final : public Command {
+	CMD_NAME("original/save")
+	STR_MENU("&Save Original Subtitle")
+	STR_DISP("Save Original Subtitle")
+	STR_HELP("Save the original subtitle")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	void operator()(agi::Context *c) override {
+		save_original(c, false);
+	}
+
+	bool Validate(const agi::Context *c) override {
+		return c->originalSubs->IsOpen();
+	}
+};
+
+struct original_save_as final : public Command {
+	CMD_NAME("original/save/as")
+	STR_MENU("Save Original Subtitle &As...")
+	STR_DISP("Save Original Subtitle As")
+	STR_HELP("Save the original subtitle with another name or in another format")
+	CMD_TYPE(COMMAND_VALIDATE)
+
+	void operator()(agi::Context *c) override {
+		save_original(c, true);
+	}
+
+	bool Validate(const agi::Context *c) override {
+		return c->originalSubs->IsOpen();
+	}
+};
+
 struct subtitle_select_all final : public Command {
 	CMD_NAME("subtitle/select/all")
 	STR_MENU("Select &All")
@@ -461,6 +563,10 @@ namespace cmd {
 		reg(std::make_unique<subtitle_new>());
 		reg(std::make_unique<subtitle_close>());
 		reg(std::make_unique<subtitle_open>());
+		reg(std::make_unique<original_open>());
+		reg(std::make_unique<original_close>());
+		reg(std::make_unique<original_save>());
+		reg(std::make_unique<original_save_as>());
 		reg(std::make_unique<subtitle_open_autosave>());
 		reg(std::make_unique<subtitle_open_charset>());
 		reg(std::make_unique<subtitle_open_video>());
