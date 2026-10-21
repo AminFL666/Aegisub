@@ -49,6 +49,7 @@
 #include "project.h"
 #include "selection_controller.h"
 #include "subs_edit_ctrl.h"
+#include "subs_original.h"
 #include "text_selection_controller.h"
 #include "timeedit_ctrl.h"
 #include "utils.h"
@@ -67,6 +68,7 @@
 #include <wx/radiobut.h>
 #include <wx/settings.h>
 #include <wx/sizer.h>
+#include <wx/textctrl.h>
 #include <wx/spinctrl.h>
 
 namespace {
@@ -201,11 +203,23 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	edit_ctrl = new SubsTextEditCtrl(this, FromDIP(wxSize(300,50)), wxBORDER_SUNKEN, c);
 	edit_ctrl->Bind(wxEVT_CHAR_HOOK, &SubsEditBox::OnKeyDown, this);
 
+	// Native text control used for right-to-left text, where a real
+	// bidirectional layout is needed to type Farsi, Arabic or Hebrew
+	// Native controls lay out bidirectional text properly, which Scintilla
+	// cannot do. wxTE_RIGHT keeps the lines aligned to the right, as they are
+	// rendered on screen.
+	rtl_edit = new wxTextCtrl(this, wxWindow::NewControlId(), "", wxDefaultPosition, FromDIP(wxSize(300,50)),
+		wxBORDER_SUNKEN | wxTE_MULTILINE | wxTE_RICH2 | wxTE_RIGHT);
+	rtl_edit->SetToolTip(_("Right-to-left text editor. Line breaks are shown as real line breaks."));
+	Bind(wxEVT_TEXT, &SubsEditBox::OnRtlEdit, this, rtl_edit->GetId());
+
 	secondary_editor = new wxTextCtrl(this, -1, "", wxDefaultPosition, FromDIP(wxSize(300,50)), wxBORDER_SUNKEN | wxTE_MULTILINE | wxTE_READONLY);
 
 	main_sizer->Add(secondary_editor,1,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
 	main_sizer->Add(edit_ctrl,1,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
+	main_sizer->Add(rtl_edit,1,wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM,3);
 	main_sizer->Hide(secondary_editor);
+	main_sizer->Hide(rtl_edit);
 
 	bottom_sizer = new wxBoxSizer(wxHORIZONTAL);
 	bottom_sizer->Add(MakeBottomButton("edit/revert"), wxSizerFlags().Border(wxRIGHT));
@@ -237,7 +251,10 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		context->selectionController->AddActiveLineListener(&SubsEditBox::OnActiveLineChanged, this),
 		context->selectionController->AddSelectionListener(&SubsEditBox::OnSelectedSetChanged, this),
 		context->initialLineState->AddChangeListener(&SubsEditBox::OnLineInitialTextChanged, this),
+		context->originalSubs->AddChangeListener(&SubsEditBox::OnOriginalSubsChanged, this),
 	 });
+
+	current_file_direction = rtl::DetectMajority(*c->ass);
 
 	context->textSelectionController->SetControl(edit_ctrl);
 	edit_ctrl->SetFocus();
@@ -284,6 +301,7 @@ void SubsEditBox::MakeButton(const char *cmd_name) {
 	wxBitmapButton *btn = new wxBitmapButton(this, -1, command->Icon());
 	tool_tip_bindings.emplace_back(btn, command->StrHelp(), "Subtitle Edit Box", cmd_name);
 
+	current_only_buttons.push_back(btn);
 	middle_right_sizer->Add(btn, wxSizerFlags().Expand());
 	btn->Bind(wxEVT_BUTTON, std::bind(&SubsEditBox::CallCommand, this, cmd_name));
 }
@@ -293,6 +311,7 @@ wxButton *SubsEditBox::MakeBottomButton(const char *cmd_name) {
 	wxButton *btn = new wxButton(this, -1, command->StrDisplay(c));
 	tool_tip_bindings.emplace_back(btn, command->StrHelp(), "Subtitle Edit Box", cmd_name);
 
+	current_only_buttons.push_back(btn);
 	btn->Bind(wxEVT_BUTTON, std::bind(&SubsEditBox::CallCommand, this, cmd_name));
 	return btn;
 }
@@ -329,8 +348,11 @@ void SubsEditBox::OnCommit(int type) {
 	}
 
 	if (type == AssFile::COMMIT_NEW) {
+		current_file_direction = rtl::DetectMajority(*c->ass);
 		PopulateList(effect_box, AssDialogue_Effect);
 		PopulateList(actor_box, AssDialogue_Actor);
+		if (editing_original && c->originalSubs->IsOpen())
+			RefreshEditorText();
 		return;
 	}
 	else if (type & AssFile::COMMIT_STYLES)
@@ -345,6 +367,14 @@ void SubsEditBox::OnCommit(int type) {
 void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
 	if (!line) return;
 
+	// When editing the original subtitle only its text is shown here; all of
+	// the other fields belong to the current file
+	if (editing_original) {
+		if (type & (AssFile::COMMIT_DIAG_FULL))
+			RefreshEditorText();
+		return;
+	}
+
 	if (type & AssFile::COMMIT_DIAG_TIME) {
 		start_time->SetTime(line->Start);
 		end_time->SetTime(line->End);
@@ -352,8 +382,8 @@ void SubsEditBox::UpdateFields(int type, bool repopulate_lists) {
 	}
 
 	if (type & AssFile::COMMIT_DIAG_TEXT) {
-		edit_ctrl->SetTextTo(line->Text);
-		UpdateCharacterCount(line->Text);
+		RefreshEditorText();
+		UpdateCharacterCount(line->Text.get());
 	}
 
 	if (type & AssFile::COMMIT_DIAG_META) {
@@ -435,12 +465,31 @@ void SubsEditBox::UpdateFrameTiming(agi::vfr::Framerate const& fps) {
 }
 
 void SubsEditBox::OnKeyDown(wxKeyEvent &event) {
-	if (!osx::ime::process_key_event(edit_ctrl, event))
-		hotkey::check("Subtitle Edit Box", c, event);
+	if (osx::ime::process_key_event(edit_ctrl, event))
+		return;
+
+	// The original subtitle has its own undo stack, as its text is not part of
+	// the current file's undo history
+	if (editing_original && event.CmdDown()) {
+		int key = event.GetKeyCode();
+		if (key == 'Z' || key == 'z') {
+			if (event.ShiftDown())
+				c->originalSubs->Redo();
+			else
+				c->originalSubs->Undo();
+			return;
+		}
+		if (key == 'Y' || key == 'y') {
+			c->originalSubs->Redo();
+			return;
+		}
+	}
+
+	hotkey::check("Subtitle Edit Box", c, event);
 }
 
 void SubsEditBox::OnChange(wxStyledTextEvent &event) {
-	if (line && edit_ctrl->GetTextRaw().data() != line->Text.get()) {
+	if (line && !editing_original && edit_ctrl->GetTextRaw().data() != line->Text.get()) {
 		if (event.GetModificationType() & wxSTC_STARTACTION)
 			commit_id = -1;
 		CommitText(_("modify text"));
@@ -477,8 +526,17 @@ void SubsEditBox::SetSelectedRows(T AssDialogueBase::*field, wxString const& val
 }
 
 void SubsEditBox::CommitText(wxString const& desc) {
-	auto data = edit_ctrl->GetTextRaw();
-	SetSelectedRows(&AssDialogue::Text, boost::flyweight<std::string>(data.data(), data.length()), desc, AssFile::COMMIT_DIAG_TEXT, true);
+	auto data = GetEditorText();
+
+	if (editing_original) {
+		if (auto *orig = OriginalLine()) {
+			c->originalSubs->SetLineText(line->Row, data, true);
+			UpdateCharacterCount(orig->Text.get());
+		}
+		return;
+	}
+
+	SetSelectedRows(&AssDialogue::Text, boost::flyweight<std::string>(data), desc, AssFile::COMMIT_DIAG_TEXT, true);
 }
 
 void SubsEditBox::CommitTimes(TimeField field) {
@@ -571,13 +629,21 @@ void SubsEditBox::OnFrameTimeRadio(wxCommandEvent &event) {
 }
 
 void SubsEditBox::SetControlsState(bool state) {
-	if (state == controls_enabled) return;
+	if (state == controls_enabled) {
+		if (state)
+			ApplyOriginalReadOnly(editing_original);
+		return;
+	}
 	controls_enabled = state;
 
 	Enable(state);
 	if (!state) {
 		wxEventBlocker blocker(this);
 		edit_ctrl->SetTextTo("");
+		rtl_edit->ChangeValue("");
+	}
+	else {
+		ApplyOriginalReadOnly(editing_original);
 	}
 }
 
@@ -644,4 +710,202 @@ void SubsEditBox::UpdateCharacterCount(std::string const& text) {
 		char_count->SetBackgroundColour(to_wx(OPT_GET("Colour/Subtitle/Syntax/Background/Error")->GetColor()));
 	else
 		char_count->SetBackgroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW));
+}
+
+AssDialogue *SubsEditBox::OriginalLine() const {
+	if (!editing_original || !line || !c->originalSubs->IsOpen())
+		return nullptr;
+
+	return c->originalSubs->LineForCurrentRow(line->Row);
+}
+
+void SubsEditBox::SetEditingOriginal(bool original) {
+	if (original && (!c->originalSubs->IsOpen() || !line))
+		return;
+
+	if (original == editing_original) {
+		if (original)
+			RefreshEditorText();
+		(rtl_mode ? static_cast<wxWindow *>(rtl_edit) : static_cast<wxWindow *>(edit_ctrl))->SetFocus();
+		return;
+	}
+
+	editing_original = original;
+	commit_id = -1;
+
+	ApplyOriginalReadOnly(original);
+	RefreshEditorText();
+
+	(rtl_mode ? static_cast<wxWindow *>(rtl_edit) : static_cast<wxWindow *>(edit_ctrl))->SetFocus();
+}
+
+std::string SubsEditBox::GetEditorText() const {
+	if (!rtl_mode)
+		return edit_ctrl->GetTextRaw().data();
+
+	// Line breaks which are shown as real line breaks go back to \N
+	std::string text = from_wx(rtl_edit->GetValue());
+	std::string ret;
+	ret.reserve(text.size());
+
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] == '\r') {
+			if (i + 1 < text.size() && text[i + 1] == '\n')
+				++i;
+			ret += "\\N";
+		}
+		else if (text[i] == '\n') {
+			ret += "\\N";
+		}
+		else {
+			ret += text[i];
+		}
+	}
+
+	return ret;
+}
+
+void SubsEditBox::SetTextDirection(bool rtl) {
+	if (rtl == rtl_mode)
+		return;
+
+	rtl_mode = rtl;
+
+	wxSizer *sizer = GetSizer();
+	if (!sizer)
+		return;
+
+	Freeze();
+
+	if (rtl) {
+		sizer->Show(edit_ctrl, false);
+		sizer->Show(rtl_edit, true);
+		context->textSelectionController->SetControl(nullptr);
+		rtl_edit->SetFocus();
+	}
+	else {
+		sizer->Show(rtl_edit, false);
+		sizer->Show(edit_ctrl, true);
+		context->textSelectionController->SetControl(edit_ctrl);
+		edit_ctrl->SetFocus();
+	}
+
+	sizer->Layout();
+	Thaw();
+}
+
+void SubsEditBox::SetEditorText(std::string const& text) {
+	rtl::Direction dir = rtl::Detect(text);
+	if (!rtl::HasStrongDirection(text))
+		dir = (editing_original && c->originalSubs->IsOpen()) ? c->originalSubs->Direction() : current_file_direction;
+
+	SetTextDirection(dir == rtl::Direction::RTL);
+
+	if (!rtl_mode) {
+		edit_ctrl->SetTextTo(text);
+		return;
+	}
+
+	// Show \N and \n as real line breaks while editing
+	std::string display;
+	display.reserve(text.size());
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] == '\\' && i + 1 < text.size() && (text[i + 1] == 'N' || text[i + 1] == 'n')) {
+			display += '\n';
+			++i;
+		}
+		else {
+			display += text[i];
+		}
+	}
+
+	if (rtl_edit->GetValue() != to_wx(display)) {
+		rtl_edit->ChangeValue(to_wx(display));
+		rtl_edit->SetInsertionPointEnd();
+	}
+}
+
+void SubsEditBox::RefreshEditorText() {
+	std::string text;
+	if (editing_original) {
+		auto *orig = OriginalLine();
+		text = orig ? orig->Text.get() : std::string();
+	}
+	else if (line) {
+		text = line->Text.get();
+	}
+
+	rtl::Direction dir = rtl::Detect(text);
+	if (!rtl::HasStrongDirection(text))
+		dir = (editing_original && c->originalSubs->IsOpen()) ? c->originalSubs->Direction() : current_file_direction;
+
+	bool was_rtl = rtl_mode;
+	SetTextDirection(dir == rtl::Direction::RTL);
+
+	// Leave the editor alone while the text already matches, so that the caret
+	// does not jump around while typing
+	if (was_rtl == rtl_mode && text == GetEditorText())
+		return;
+
+	SetEditorText(text);
+}
+
+void SubsEditBox::ApplyOriginalReadOnly(bool original) {
+	auto enable = [original](wxWindow *ctrl) {
+		if (ctrl)
+			ctrl->Enable(!original);
+	};
+
+	enable(comment_box);
+	enable(style_box);
+	enable(style_edit_button);
+	enable(actor_box);
+	enable(effect_box);
+	enable(layer);
+	enable(start_time);
+	enable(end_time);
+	enable(duration);
+	for (auto *ctrl : margin)
+		enable(ctrl);
+	for (auto *ctrl : current_only_buttons)
+		enable(ctrl);
+
+	// Only the text of the original can be edited
+	edit_ctrl->Enable(true);
+	rtl_edit->Enable(true);
+	char_count->Enable(true);
+}
+
+void SubsEditBox::OnRtlEdit(wxCommandEvent &) {
+	if (!rtl_mode)
+		return;
+
+	auto text = GetEditorText();
+
+	if (editing_original) {
+		auto *orig = OriginalLine();
+		if (!orig || orig->Text.get() == text)
+			return;
+
+		c->originalSubs->SetLineText(line->Row, text, true);
+		UpdateCharacterCount(orig->Text.get());
+		return;
+	}
+
+	if (line && text != line->Text.get()) {
+		CommitText(_("modify text"));
+		UpdateCharacterCount(text);
+	}
+}
+
+void SubsEditBox::OnOriginalSubsChanged() {
+	if (!editing_original)
+		return;
+
+	if (!c->originalSubs->IsOpen()) {
+		SetEditingOriginal(false);
+		return;
+	}
+
+	RefreshEditorText();
 }

@@ -113,6 +113,12 @@ class VideoController final : public wxEvtHandler {
 
 	void RequestFrame();
 
+	/// @brief Reload the subtitles shown in the video
+	///
+	/// When an original subtitle is open it is rendered on top of the video
+	/// together with the current file, using the "Original" style.
+	void ReloadSubtitles();
+
 public:
 	VideoController(agi::Context *context);
 

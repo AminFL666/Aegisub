@@ -310,6 +310,7 @@
 			"Audio" : "",
 			"Automation" : "",
 			"Keyframes" : "",
+			"Original Subtitles" : "",
 			"Subtitles" : "",
 			"Timecodes" : "",
 			"Video" : ""
@@ -400,6 +401,9 @@
 		},
 		"Highlight" : {
 			"Syntax" : true
+		},
+		"Original Subtitle" : {
+			"Sash Position" : 0
 		},
 		"Provider" : "libass",
 		"Show Original": false,

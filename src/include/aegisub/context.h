@@ -31,6 +31,9 @@ class InitialLineState;
 class SelectionController;
 class SubsController;
 class BaseGrid;
+class OriginalGrid;
+class OriginalSubsController;
+class SubsEditBox;
 class TextSelectionController;
 class VideoController;
 class VideoDisplay;
@@ -54,6 +57,8 @@ struct Context {
 	std::unique_ptr<InitialLineState> initialLineState;
 	std::unique_ptr<SearchReplaceEngine> search;
 	std::unique_ptr<Path> path;
+	/// The companion "original subtitle" file shown next to the current one
+	std::unique_ptr<OriginalSubsController> originalSubs;
 
 	// Things that should probably be in some sort of UI-context-model
 	wxWindow *parent = nullptr;
@@ -64,6 +69,8 @@ struct Context {
 	AudioBox *audioBox = nullptr;
 	AudioKaraoke *karaoke = nullptr;
 	BaseGrid *subsGrid = nullptr;
+	OriginalGrid *originalGrid = nullptr;
+	SubsEditBox *subsEditBox = nullptr;
 	std::unique_ptr<DialogManager> dialog;
 	FrameMain *frame = nullptr;
 	VideoDisplay *videoDisplay = nullptr;

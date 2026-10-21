@@ -43,6 +43,7 @@
 #include "utils.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subs_edit_box.h"
 #include "video_controller.h"
 
 #include <libaegisub/util.h>
@@ -505,6 +506,10 @@ void BaseGrid::OnMouseEvent(wxMouseEvent &event) {
 			if (dclick) {
 				context->audioBox->ScrollToActiveLine();
 				context->videoController->JumpToTime(dlg->Start);
+				// Double-clicking a line of the current file moves the text
+				// edit box back to the current file
+				if (context->subsEditBox)
+					context->subsEditBox->SetEditingOriginal(false);
 			}
 			SelectRow(row, false);
 			return;

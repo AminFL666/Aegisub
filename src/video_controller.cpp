@@ -36,6 +36,7 @@
 #include "format.h"
 #include "include/aegisub/context.h"
 #include "options.h"
+#include "subs_original.h"
 #include "project.h"
 #include "selection_controller.h"
 #include "time_range.h"
@@ -77,10 +78,28 @@ void VideoController::OnSubtitlesCommit(int type, const AssDialogue *changed) {
 		}
 	}
 
-	if (!changed)
-		provider->LoadSubtitles(context->ass.get());
+	if (!changed || (context->originalSubs && context->originalSubs->IsOpen()))
+		ReloadSubtitles();
 	else
 		provider->UpdateSubtitles(changed);
+}
+
+void VideoController::ReloadSubtitles() {
+	if (!provider)
+		return;
+
+	if (context->originalSubs && context->originalSubs->IsOpen()) {
+		// The original is part of what has to be drawn, so the whole merged
+		// file has to replace the loaded one
+		auto merged = context->originalSubs->MakePreviewFile();
+		provider->LoadSubtitles(merged.get());
+	}
+	else {
+		provider->LoadSubtitles(context->ass.get());
+	}
+
+	if (!IsPlaying())
+		RequestFrame();
 }
 
 void VideoController::OnActiveLineChanged(AssDialogue *line) {
