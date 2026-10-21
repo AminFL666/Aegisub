@@ -69,6 +69,7 @@ class OriginalGrid final : public wxWindow, private agi::signal::ConnectionScope
 	void OnScroll(wxScrollEvent &event);
 	void OnMouse(wxMouseEvent &event);
 	void OnKeyDown(wxKeyEvent &event);
+	void OnMouseWheel(wxMouseEvent &event);
 	void OnDPIChanged(wxDPIChangedEvent &event);
 	void OnActiveLineChanged();
 

@@ -67,7 +67,7 @@ OriginalGrid::OriginalGrid(wxWindow *parent, agi::Context *context)
 	auto sizer = new wxBoxSizer(wxHORIZONTAL);
 	sizer->AddStretchSpacer();
 	sizer->Add(scrollBar, 0, wxEXPAND, 0);
-	SetSizerAndFit(sizer);
+	SetSizer(sizer);
 
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 
@@ -85,10 +85,22 @@ OriginalGrid::OriginalGrid(wxWindow *parent, agi::Context *context)
 
 	Bind(wxEVT_PAINT, &OriginalGrid::OnPaint, this);
 	Bind(wxEVT_SIZE, &OriginalGrid::OnSize, this);
-	Bind(wxEVT_MOUSE_EVENTS, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_LEFT_DOWN, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_LEFT_DCLICK, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_MOUSEWHEEL, &OriginalGrid::OnMouseWheel, this);
 	Bind(wxEVT_KEY_DOWN, &OriginalGrid::OnKeyDown, this);
 	Bind(wxEVT_DPI_CHANGED, &OriginalGrid::OnDPIChanged, this);
-	scrollBar->Bind(wxEVT_SCROLL, &OriginalGrid::OnScroll, this);
+
+	// There is no catch-all scroll event, so every event which can move the
+	// thumb has to be handled
+	scrollBar->Bind(wxEVT_SCROLL_TOP, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_BOTTOM, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_LINEUP, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_LINEDOWN, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_PAGEUP, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_PAGEDOWN, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_THUMBTRACK, &OriginalGrid::OnScroll, this);
+	scrollBar->Bind(wxEVT_SCROLL_THUMBRELEASE, &OriginalGrid::OnScroll, this);
 }
 
 OriginalGrid::~OriginalGrid() = default;
@@ -211,6 +223,19 @@ void OriginalGrid::SelectPairedLine(int row, bool move_editor) {
 
 	if (move_editor && context->subsEditBox)
 		context->subsEditBox->SetEditingOriginal(true);
+}
+
+void OriginalGrid::OnMouseWheel(wxMouseEvent &event) {
+	if (!context->originalSubs || !context->originalSubs->IsOpen())
+		return;
+
+	int rotation = event.GetWheelRotation();
+	if (rotation == 0)
+		return;
+
+	// Scroll the direction the wheel was turned in, a few lines at a time
+	int lines = std::max(1, event.GetLinesPerAction());
+	ScrollTo(yPos - (rotation > 0 ? lines : -lines));
 }
 
 void OriginalGrid::OnMouse(wxMouseEvent &event) {

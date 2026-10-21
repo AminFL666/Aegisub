@@ -205,7 +205,7 @@ void FrameMain::InitContents() {
 	context->originalGrid = new OriginalGrid(subsSplitter, context.get());
 
 	subsSplitter->Initialize(context->subsGrid);
-	subsSplitter->Bind(wxEVT_SPLITTER_SASH_POS_CHANGED, [this](wxSplitterEvent& evt) {
+	subsSplitter->Bind(wxEVT_SPLITTER_SASH_POS_CHANGED, [](wxSplitterEvent& evt) {
 		OPT_SET("Subtitle/Original Subtitle/Sash Position")->SetInt(evt.GetSashPosition());
 		evt.Skip();
 	});
