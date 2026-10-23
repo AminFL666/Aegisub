@@ -32,6 +32,7 @@
 #include "ass_dialogue.h"
 #include "ass_file.h"
 #include "ass_style.h"
+#include "charset_detect.h"
 #include "compat.h"
 #include "format.h"
 #include "include/aegisub/context.h"
@@ -156,12 +157,25 @@ void OriginalSubsController::UpdateDirection() {
 }
 
 void OriginalSubsController::Open(agi::fs::path const& path) {
-	auto reader = SubtitleFormat::GetReader(path, "");
+	// Detect the character set exactly like opening the file as the current
+	// subtitles does; passing no encoding at all would read the file as if it
+	// were in the system character set, which breaks UTF-16 files and mangles
+	// anything that is not ASCII.
+	std::string encoding;
+	try {
+		encoding = CharSetDetect::GetEncoding(path);
+	}
+	catch (agi::UserCancelException const&) {
+		// The user closed the character set picker, so nothing was opened
+		return;
+	}
+
+	auto reader = SubtitleFormat::GetReader(path, encoding.c_str());
 	if (!reader)
 		throw agi::InvalidInputException("Unknown file type.");
 
 	auto new_file = std::make_unique<AssFile>();
-	reader->ReadFile(new_file.get(), path, context->project->Timecodes(), "");
+	reader->ReadFile(new_file.get(), path, context->project->Timecodes(), encoding.c_str());
 
 	Close();
 
