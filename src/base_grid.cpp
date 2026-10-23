@@ -62,9 +62,9 @@ enum {
 	MENU_SHOW_COL = (wxID_HIGHEST + 1) + 2000 // Needs 15 IDs after this
 };
 
-BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
+BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context, wxWindow *scrollbarParent)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS | wxSUNKEN_BORDER)
-, scrollBar(new wxScrollBar(this, GRID_SCROLLBAR, wxDefaultPosition, wxDefaultSize, wxSB_VERTICAL))
+, scrollBar(new wxScrollBar(scrollbarParent ? scrollbarParent : this, GRID_SCROLLBAR, wxDefaultPosition, wxDefaultSize, wxSB_VERTICAL))
 , context(context)
 , columns(GetGridColumns())
 , columns_visible(OPT_GET("Subtitle/Grid/Column")->GetListBool())
@@ -72,11 +72,24 @@ BaseGrid::BaseGrid(wxWindow* parent, agi::Context *context)
 {
 	scrollBar->SetScrollbar(0,10,100,10);
 
-	auto scrollbarpositioner = new wxBoxSizer(wxHORIZONTAL);
-	scrollbarpositioner->AddStretchSpacer();
-	scrollbarpositioner->Add(scrollBar, 0, wxEXPAND, 0);
+	// The scrollbar is bound directly rather than through the event table,
+	// as it is not necessarily a child of the grid
+	for (auto type : {
+		wxEVT_SCROLL_TOP, wxEVT_SCROLL_BOTTOM,
+		wxEVT_SCROLL_LINEUP, wxEVT_SCROLL_LINEDOWN,
+		wxEVT_SCROLL_PAGEUP, wxEVT_SCROLL_PAGEDOWN,
+		wxEVT_SCROLL_THUMBTRACK, wxEVT_SCROLL_THUMBRELEASE,
+	}) {
+		scrollBar->Bind(type, &BaseGrid::OnScroll, this);
+	}
 
-	SetSizerAndFit(scrollbarpositioner);
+	if (scrollBar->GetParent() == this) {
+		auto scrollbarpositioner = new wxBoxSizer(wxHORIZONTAL);
+		scrollbarpositioner->AddStretchSpacer();
+		scrollbarpositioner->Add(scrollBar, 0, wxEXPAND, 0);
+
+		SetSizerAndFit(scrollbarpositioner);
+	}
 
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 
@@ -121,7 +134,6 @@ BaseGrid::~BaseGrid() { }
 BEGIN_EVENT_TABLE(BaseGrid,wxWindow)
 	EVT_PAINT(BaseGrid::OnPaint)
 	EVT_SIZE(BaseGrid::OnSize)
-	EVT_COMMAND_SCROLL(GRID_SCROLLBAR,BaseGrid::OnScroll)
 	EVT_MOUSE_EVENTS(BaseGrid::OnMouseEvent)
 	EVT_KEY_DOWN(BaseGrid::OnKeyDown)
 	EVT_CHAR_HOOK(BaseGrid::OnCharHook)
@@ -589,7 +601,11 @@ void BaseGrid::AdjustScrollbar() {
 	wxSize scrollbarSize = scrollBar->GetSize();
 
 	scrollBar->Freeze();
-	scrollBar->SetSize(clientSize.GetWidth() - scrollbarSize.GetWidth(), 0, scrollbarSize.GetWidth(), clientSize.GetHeight());
+
+	// A scrollbar which lives in another window is placed there by that
+	// window's sizer
+	if (scrollBar->GetParent() == this)
+		scrollBar->SetSize(clientSize.GetWidth() - scrollbarSize.GetWidth(), 0, scrollbarSize.GetWidth(), clientSize.GetHeight());
 
 	if (GetRows() <= 1) {
 		yPos = 0;

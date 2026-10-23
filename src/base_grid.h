@@ -129,8 +129,20 @@ class BaseGrid final : public wxWindow {
 	AssDialogue *GetDialogue(int n) const;
 
 public:
-	BaseGrid(wxWindow* parent, agi::Context *context);
+	/// @brief Create the grid
+	/// @param parent Window the grid is placed in
+	/// @param context Project context
+	/// @param scrollbarParent Window the scrollbar is created in
+	///
+	/// The scrollbar can live in a different window than the grid, so that it
+	/// can be put at the right edge of the whole subtitles area rather than
+	/// at the edge of the grid, which would put it between the grid and the
+	/// original subtitle pane.
+	BaseGrid(wxWindow* parent, agi::Context *context, wxWindow *scrollbarParent = nullptr);
 	~BaseGrid();
+
+	/// The grid's scrollbar, for putting it in a sizer elsewhere
+	wxScrollBar *GetScrollbar() const { return scrollBar; }
 
 	void SetByFrame(bool state);
 	void ScrollTo(int y);

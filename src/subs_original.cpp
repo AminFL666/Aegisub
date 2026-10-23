@@ -128,6 +128,10 @@ void OriginalSubsController::RepairByRow() {
 	unpaired = std::move(all);
 
 	SyncToCurrentFile(true);
+
+	// The preview has to be rebuilt for the new current file, as the lines
+	// which were paired with the old one are gone
+	context->videoController->ReloadSubtitles();
 }
 
 AssDialogue *OriginalSubsController::LineById(int id) const {
@@ -540,11 +544,21 @@ std::unique_ptr<AssFile> OriginalSubsController::MakePreviewFile() const {
 		return merged;
 
 	// The current file's copy of the Original style is authoritative, as it is
-	// the one the user edits in the style manager
+	// the one the user edits in the style manager. It has to exist before the
+	// lines are added, as the video preview replaces the style of any line
+	// whose style is missing with Default, which would put the original back
+	// at the bottom of the screen.
 	EnsureStyleIn(*merged);
 
-	for (auto const& line : file->Events)
-		merged->Events.push_back(*new AssDialogue(line));
+	// all_lines is what the pane shows: the paired lines in the order of the
+	// current file, followed by any lines the current file has no partner for.
+	// Using it rather than the file's own line list keeps the preview and the
+	// pane showing exactly the same thing.
+	for (auto const *line : all_lines)
+		merged->Events.push_back(*new AssDialogue(*line));
+
+	LOG_D("subs/original") << "Preview file has " << merged->Events.size()
+		<< " lines and " << merged->Styles.size() << " styles";
 
 	return merged;
 }

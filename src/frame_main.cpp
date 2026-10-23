@@ -192,14 +192,24 @@ void FrameMain::InitContents() {
 	StartupLog("Create background panel");
 	auto Panel = new wxPanel(this, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
 
+	StartupLog("Create subtitles area");
+	// The grid's scrollbar is put at the right edge of the whole subtitles
+	// area rather than inside the grid, so that it stays at the right side of
+	// the window when the original subtitle pane is shown next to the grid
+	auto subsPanel = new wxPanel(Panel, -1, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
+	auto subsSizer = new wxBoxSizer(wxHORIZONTAL);
+
 	StartupLog("Create subtitles splitter");
-	subsSplitter = new wxSplitterWindow(Panel, -1, wxDefaultPosition, wxDefaultSize,
+	subsSplitter = new wxSplitterWindow(subsPanel, -1, wxDefaultPosition, wxDefaultSize,
 		wxSP_LIVE_UPDATE | wxSP_3DSASH | wxSP_NOBORDER);
 	subsSplitter->SetMinimumPaneSize(FromDIP(80));
 	subsSplitter->SetSashGravity(0.5);
 
 	StartupLog("Create subtitles grid");
-	context->subsGrid = new BaseGrid(subsSplitter, context.get());
+	context->subsGrid = new BaseGrid(subsSplitter, context.get(), subsPanel);
+	subsSizer->Add(subsSplitter, 1, wxEXPAND, 0);
+	subsSizer->Add(context->subsGrid->GetScrollbar(), 0, wxEXPAND, 0);
+	subsPanel->SetSizer(subsSizer);
 
 	StartupLog("Create original subtitles grid");
 	context->originalGrid = new OriginalGrid(subsSplitter, context.get());
@@ -230,7 +240,7 @@ void FrameMain::InitContents() {
 	MainSizer = new wxBoxSizer(wxVERTICAL);
 	MainSizer->Add(new wxStaticLine(Panel),0,wxEXPAND,0);
 	MainSizer->Add(TopSizer,0,wxEXPAND,0);
-	MainSizer->Add(subsSplitter,1,wxEXPAND,0);
+	MainSizer->Add(subsPanel,1,wxEXPAND,0);
 	Panel->SetSizer(MainSizer);
 
 	StartupLog("Perform layout");
@@ -260,6 +270,10 @@ void FrameMain::ShowOriginalPane(bool show) {
 
 			subsSplitter->SplitVertically(context->subsGrid, context->originalGrid, position);
 		}
+
+		// The original is drawn over the video as well, so the video has to
+		// pick the merged subtitles up now that the pane is shown
+		context->videoController->ReloadSubtitles();
 	}
 	else {
 		SaveOriginalPaneSize();

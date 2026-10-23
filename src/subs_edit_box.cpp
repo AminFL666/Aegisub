@@ -223,6 +223,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 	rtl_edit->SetToolTip(_("Right-to-left text editor. Line breaks are shown as real line breaks."));
 	Bind(wxEVT_TEXT, &SubsEditBox::OnRtlEdit, this, rtl_edit->GetId());
 	rtl_edit->Bind(wxEVT_KEY_DOWN, &SubsEditBox::OnRtlKeyDown, this);
+	// Same font as the left-to-right editor, so that both look the same
+	rtl_edit->SetFont(EditBoxFont());
 	ApplyRtlParagraph();
 
 	secondary_editor = new wxTextCtrl(this, -1, "", wxDefaultPosition, FromDIP(wxSize(300,50)), wxBORDER_SUNKEN | wxTE_MULTILINE | wxTE_READONLY);
@@ -264,6 +266,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		context->selectionController->AddSelectionListener(&SubsEditBox::OnSelectedSetChanged, this),
 		context->initialLineState->AddChangeListener(&SubsEditBox::OnLineInitialTextChanged, this),
 		context->originalSubs->AddChangeListener(&SubsEditBox::OnOriginalSubsChanged, this),
+		OPT_SUB("Subtitle/Edit Box/Font Face", [this] { if (rtl_edit) rtl_edit->SetFont(EditBoxFont()); }),
+		OPT_SUB("Subtitle/Edit Box/Font Size", [this] { if (rtl_edit) rtl_edit->SetFont(EditBoxFont()); }),
 	 });
 
 	current_file_direction = rtl::DetectMajority(*c->ass);
