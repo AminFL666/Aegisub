@@ -582,20 +582,20 @@ void OriginalSubsController::SetLineText(int row, std::string const& text, bool 
 
 	// An empty line would be dropped from some formats when saving, so it is
 	// stored with a zero-width space instead
-	text = EnsureNonEmpty(text);
+	std::string new_text = EnsureNonEmpty(text);
 
-	if (line->Text.get() == text)
+	if (line->Text.get() == new_text)
 		return;
 
 	if (amend && !undo_stack.empty() && undo_stack.back().id == id)
-		undo_stack.back().after = text;
+		undo_stack.back().after = new_text;
 	else
-		undo_stack.push_back({id, line->Text.get(), text});
+		undo_stack.push_back({id, line->Text.get(), new_text});
 
 	// A new edit invalidates the redo history
 	redo_stack.clear();
 
-	line->Text = text;
+	line->Text = new_text;
 	active_row = row;
 	SetModified(true);
 
