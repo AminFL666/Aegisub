@@ -66,6 +66,17 @@ const char *const placeholder_text = "\xE2\x80\x8B";
 /// bring their text back
 constexpr size_t max_remembered_deleted = 200;
 
+/// @brief Keep a line which is empty from being dropped when saving
+///
+/// Subtitle formats skip lines with no text at all, so an empty line of the
+/// original is stored with a zero-width space in it instead. The line then
+/// still exists in the saved file, with the same timing as the current line.
+std::string EnsureNonEmpty(std::string text) {
+	if (text.empty())
+		return placeholder_text;
+	return text;
+}
+
 } // namespace
 
 OriginalSubsController::OriginalSubsController(agi::Context *context)
@@ -175,7 +186,18 @@ void OriginalSubsController::Open(agi::fs::path const& path) {
 		throw agi::InvalidInputException("Unknown file type.");
 
 	auto new_file = std::make_unique<AssFile>();
-	reader->ReadFile(new_file.get(), path, context->project->Timecodes(), encoding.c_str());
+	try {
+		reader->ReadFile(new_file.get(), path, context->project->Timecodes(), encoding.c_str());
+	}
+	catch (agi::Exception const&) {
+		// Character set detection can guess wrong for a plain UTF-8 file with
+		// no byte order mark, so give that a try before giving up
+		if (encoding == "utf-8")
+			throw;
+
+		new_file = std::make_unique<AssFile>();
+		reader->ReadFile(new_file.get(), path, context->project->Timecodes(), "utf-8");
+	}
 
 	Close();
 
@@ -321,6 +343,8 @@ void OriginalSubsController::SaveTo(agi::fs::path const& path) {
 
 		AssFile copy(*file);
 		EnsureStyleIn(copy);
+		for (auto& line : copy.Events)
+			line.Text = EnsureNonEmpty(line.Text.get());
 		writer->WriteFile(&copy, path, context->project->Timecodes());
 	}
 
@@ -339,7 +363,7 @@ void OriginalSubsController::WriteSrt(agi::fs::path const& path) const {
 	for (auto const& line : file->Events) {
 		out.WriteLineToFile(std::to_string(++i));
 		out.WriteLineToFile(line.Start.GetSrtFormatted() + " --> " + line.End.GetSrtFormatted());
-		out.WriteLineToFile(rtl::ToPlainText(line.Text.get()));
+		out.WriteLineToFile(EnsureNonEmpty(rtl::ToPlainText(line.Text.get())));
 		out.WriteLineToFile("");
 	}
 }
@@ -372,7 +396,7 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 				// The line was deleted and is back, most likely because the
 				// deletion was undone, so restore its text
 				orig = new AssDialogue;
-				orig->Text = resurrected->second;
+				orig->Text = EnsureNonEmpty(resurrected->second);
 				removed.erase(resurrected);
 			}
 			else if (!unpaired.empty()) {
@@ -556,6 +580,10 @@ void OriginalSubsController::SetLineText(int row, std::string const& text, bool 
 	AssDialogue *line = lines[row];
 	int id = line_ids[row];
 
+	// An empty line would be dropped from some formats when saving, so it is
+	// stored with a zero-width space instead
+	text = EnsureNonEmpty(text);
+
 	if (line->Text.get() == text)
 		return;
 
@@ -586,7 +614,7 @@ void OriginalSubsController::Undo() {
 	undo_stack.pop_back();
 
 	if (auto *line = LineById(edit.id))
-		line->Text = edit.before;
+		line->Text = EnsureNonEmpty(edit.before);
 
 	redo_stack.push_back(edit);
 	SetModified(true);
@@ -603,7 +631,7 @@ void OriginalSubsController::Redo() {
 	redo_stack.pop_back();
 
 	if (auto *line = LineById(edit.id))
-		line->Text = edit.after;
+		line->Text = EnsureNonEmpty(edit.after);
 
 	undo_stack.push_back(edit);
 	SetModified(true);

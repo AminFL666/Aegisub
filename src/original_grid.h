@@ -37,56 +37,53 @@
 
 #include <vector>
 
-#include <wx/event.h>
 #include <wx/font.h>
 #include <wx/window.h>
 
-class wxScrollBar;
 class wxDC;
 namespace agi { struct Context; }
 
 /// @class OriginalGrid
-/// @brief Read-only timing with editable text of the paired original subtitle
+/// @brief The text of the original subtitle, shown next to the current file
 ///
-/// Shows the numbered lines of the original subtitle next to the current file.
-/// Clicking a row selects the paired line of the current file; double-clicking
-/// moves the text edit box to the original.
+/// The pane shows only the text, as the numbering and the timings are always
+/// the same as the current file's. It has no scrollbar of its own: it is
+/// scrolled together with the subtitle grid, so that the two always line up.
 class OriginalGrid final : public wxWindow, private agi::signal::ConnectionScope {
 	agi::Context *context;
 
-	wxScrollBar *scrollBar;
 	wxFont font;
 	int lineHeight = 16;
 	int yPos = 0;
-
-	int width_number = 40;
-	int width_time = 80;
 
 	std::vector<agi::signal::Connection> connections;
 
 	void OnPaint(wxPaintEvent &event);
 	void OnSize(wxSizeEvent &event);
-	void OnScroll(wxScrollEvent &event);
 	void OnMouse(wxMouseEvent &event);
-	void OnKeyDown(wxKeyEvent &event);
 	void OnMouseWheel(wxMouseEvent &event);
+	void OnKeyDown(wxKeyEvent &event);
 	void OnDPIChanged(wxDPIChangedEvent &event);
+	void OnShow(wxShowEvent &event);
 	void OnActiveLineChanged();
 
-	void AdjustScrollbar();
-	void ScrollTo(int position);
 	void UpdateStyle();
-	void SetColumnWidths(wxDC &dc);
 
 	int RowAtPoint(int y) const;
 	/// Select the current-file line paired with a row of the original
 	void SelectPairedLine(int row, bool move_editor);
-	void PaintCell(wxDC &dc, wxString const& text, int x, int y, int width, bool right_aligned);
 
 public:
 	OriginalGrid(wxWindow *parent, agi::Context *context);
 	~OriginalGrid();
 
-	/// Scroll so that the given row is visible
+	/// @brief Scroll the pane to the row the subtitle grid starts at
+	///
+	/// Called by the subtitle grid whenever it scrolls, as the pane has no
+	/// scrollbar and always follows it.
+	void SyncScroll(int y);
+
+	/// Scroll so that the given row is visible, scrolling the subtitle grid
+	/// rather than the pane
 	void MakeRowVisible(int row);
 };

@@ -168,6 +168,14 @@ class SubsEditBox final : public wxPanel {
 	void ApplyOriginalReadOnly(bool original);
 
 	void OnRtlEdit(wxCommandEvent &event);
+	void OnRtlKeyDown(wxKeyEvent &event);
+
+	/// @brief Make the right-to-left editor lay its paragraphs out right to left
+	///
+	/// Without it RichEdit orders the trailing neutral characters of a line as
+	/// if the line were left to right, which puts the dots of an ellipsis in the
+	/// wrong place. Does nothing outside Windows.
+	void ApplyRtlParagraph();
 	void OnOriginalSubsChanged();
 
 	// Constructor helpers

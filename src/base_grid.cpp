@@ -39,6 +39,7 @@
 #include "compat.h"
 #include "grid_column.h"
 #include "options.h"
+#include "original_grid.h"
 #include "project.h"
 #include "utils.h"
 #include "selection_controller.h"
@@ -432,6 +433,8 @@ void BaseGrid::OnScroll(wxScrollEvent &event) {
 	int newPos = event.GetPosition();
 	if (yPos != newPos) {
 		context->ass->Properties.scroll_position = yPos = newPos;
+		if (context->originalGrid)
+			context->originalGrid->SyncScroll(yPos);
 		Refresh(false);
 	}
 }
@@ -575,6 +578,8 @@ void BaseGrid::ScrollTo(int y) {
 	if (yPos != nextY) {
 		context->ass->Properties.scroll_position = yPos = nextY;
 		scrollBar->SetThumbPosition(yPos);
+		if (context->originalGrid)
+			context->originalGrid->SyncScroll(yPos);
 		Refresh(false);
 	}
 }
@@ -600,6 +605,8 @@ void BaseGrid::AdjustScrollbar() {
 	int rows = GetRows();
 
 	context->ass->Properties.scroll_position = yPos = mid(0, yPos, rows - 1);
+	if (context->originalGrid)
+		context->originalGrid->SyncScroll(yPos);
 
 	scrollBar->SetScrollbar(yPos, drawPerScreen, rows + drawPerScreen - 1, drawPerScreen - 2, true);
 	scrollBar->Thaw();

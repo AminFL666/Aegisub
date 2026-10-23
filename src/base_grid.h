@@ -135,5 +135,8 @@ public:
 	void SetByFrame(bool state);
 	void ScrollTo(int y);
 
+	/// The first row currently shown at the top of the grid
+	int GetScrollPosition() const { return yPos; }
+
 	DECLARE_EVENT_TABLE()
 };
