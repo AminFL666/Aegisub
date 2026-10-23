@@ -108,6 +108,7 @@ void General(wxTreebook *book, Preferences *parent) {
 	wxArrayString autoload_modes_arr(3, autoload_modes);
 	p->OptionChoice(general, _("Automatically load linked files"), autoload_modes_arr, "App/Auto/Load Linked Files");
 	p->OptionAdd(general, _("Undo Levels"), "Limits/Undo Levels", {.min = 2, .max = 10000});
+	p->OptionAdd(general, _("Pause on Line"), "Video/Pause on Line");
 
 	auto recent = p->PageSizer(_("Recently Used Lists"));
 	p->OptionAdd(recent, _("Files"), "Limits/MRU", {.min = 0, .max = 16});

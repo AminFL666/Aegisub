@@ -27,14 +27,18 @@
 //
 // Aegisub Project http://www.aegisub.org/
 
+/// @file original_grid.cpp
+/// @brief The original subtitle pane shown on the right of the main window
+/// @ingroup main_ui
+
 #include "original_grid.h"
 
 #include "ass_dialogue.h"
 #include "ass_file.h"
+#include "base_grid.h"
 #include "compat.h"
 #include "include/aegisub/context.h"
 #include "options.h"
-#include "rtl.h"
 #include "selection_controller.h"
 #include "subs_edit_box.h"
 #include "subs_original.h"
@@ -47,27 +51,12 @@
 #include <wx/dcbuffer.h>
 #include <wx/dcclient.h>
 #include <wx/intl.h>
-#include <wx/scrolbar.h>
 #include <wx/settings.h>
-
-namespace {
-enum {
-	ORIGINAL_GRID_SCROLLBAR = 1740
-};
-}
 
 OriginalGrid::OriginalGrid(wxWindow *parent, agi::Context *context)
 : wxWindow(parent, -1, wxDefaultPosition, wxDefaultSize, wxWANTS_CHARS | wxSUNKEN_BORDER)
 , context(context)
-, scrollBar(new wxScrollBar(this, ORIGINAL_GRID_SCROLLBAR, wxDefaultPosition, wxDefaultSize, wxSB_VERTICAL))
 {
-	scrollBar->SetScrollbar(0, 10, 100, 10);
-
-	auto sizer = new wxBoxSizer(wxHORIZONTAL);
-	sizer->AddStretchSpacer();
-	sizer->Add(scrollBar, 0, wxEXPAND, 0);
-	SetSizerAndFit(sizer);
-
 	SetBackgroundStyle(wxBG_STYLE_PAINT);
 
 	UpdateStyle();
@@ -75,7 +64,8 @@ OriginalGrid::OriginalGrid(wxWindow *parent, agi::Context *context)
 	connections = agi::signal::make_vector({
 		context->selectionController->AddActiveLineListener([this] { OnActiveLineChanged(); }),
 		context->selectionController->AddSelectionListener([this] { Refresh(false); }),
-		context->originalSubs->AddChangeListener([this] { AdjustScrollbar(); Refresh(false); }),
+		context->originalSubs->AddChangeListener([this] { Refresh(false); }),
+		context->originalSubs->AddOpenListener([this] { Refresh(false); }),
 		OPT_SUB("Colour/Subtitle Grid/Background/Background", [this] { Refresh(false); }),
 		OPT_SUB("Colour/Subtitle Grid/Header", [this] { Refresh(false); }),
 		OPT_SUB("Subtitle/Grid/Font Face", &OriginalGrid::UpdateStyle, this),
@@ -84,17 +74,18 @@ OriginalGrid::OriginalGrid(wxWindow *parent, agi::Context *context)
 
 	Bind(wxEVT_PAINT, &OriginalGrid::OnPaint, this);
 	Bind(wxEVT_SIZE, &OriginalGrid::OnSize, this);
-	Bind(wxEVT_MOUSE_EVENTS, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_LEFT_DOWN, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_LEFT_DCLICK, &OriginalGrid::OnMouse, this);
+	Bind(wxEVT_MOUSEWHEEL, &OriginalGrid::OnMouseWheel, this);
 	Bind(wxEVT_KEY_DOWN, &OriginalGrid::OnKeyDown, this);
 	Bind(wxEVT_DPI_CHANGED, &OriginalGrid::OnDPIChanged, this);
-	scrollBar->Bind(wxEVT_SCROLL, &OriginalGrid::OnScroll, this);
+	Bind(wxEVT_SHOW, &OriginalGrid::OnShow, this);
 }
 
 OriginalGrid::~OriginalGrid() = default;
 
 void OriginalGrid::UpdateStyle() {
 	font = *wxNORMAL_FONT;
-	font.SetEncoding(wxFONTENCODING_DEFAULT);
 	wxString fontname = FontFace("Subtitle/Grid");
 	if (!fontname.empty())
 		font.SetFaceName(fontname);
@@ -104,53 +95,45 @@ void OriginalGrid::UpdateStyle() {
 	dc.SetFont(font);
 	lineHeight = dc.GetCharHeight() + 4;
 
-	SetColumnWidths(dc);
-	AdjustScrollbar();
 	Refresh(false);
 }
 
-void OriginalGrid::SetColumnWidths(wxDC &dc) {
-	dc.SetFont(font);
-	width_number = std::max(FromDIP(32), dc.GetTextExtent(wxS("0000")).GetWidth() + 8);
-	width_time = std::max(FromDIP(64), dc.GetTextExtent(wxS("0:00:00.00")).GetWidth() + 10);
-}
-
-void OriginalGrid::AdjustScrollbar() {
-	int rows = context->originalSubs ? context->originalSubs->Lines().size() : 0;
-	int page = std::max(1, GetClientSize().GetHeight() / lineHeight);
-	yPos = agi::util::mid(0, yPos, std::max(0, rows - page));
-	scrollBar->SetScrollbar(yPos, page, rows + 1, page);
-}
-
-void OriginalGrid::ScrollTo(int position) {
-	if (position == yPos)
+void OriginalGrid::SyncScroll(int y) {
+	if (y == yPos)
 		return;
 
-	yPos = position;
-	AdjustScrollbar();
+	yPos = y;
 	Refresh(false);
 }
 
 void OriginalGrid::MakeRowVisible(int row) {
-	int h = GetClientSize().GetHeight();
+	// The pane has no scrollbar of its own, so scrolling it means scrolling
+	// the subtitle grid it is lined up with
+	if (!context->subsGrid)
+		return;
 
+	int h = GetClientSize().GetHeight();
 	if (row < yPos + 1)
-		ScrollTo(row - 1);
+		context->subsGrid->ScrollTo(row - 1);
 	else if (row > yPos + h / lineHeight - 3)
-		ScrollTo(row - h / lineHeight + 3);
+		context->subsGrid->ScrollTo(row - h / lineHeight + 3);
 }
 
 int OriginalGrid::RowAtPoint(int y) const {
 	return y / lineHeight + yPos - 1;
 }
 
-void OriginalGrid::OnScroll(wxScrollEvent &event) {
-	ScrollTo(event.GetPosition());
+void OriginalGrid::OnSize(wxSizeEvent &) {
+	Refresh(false);
 }
 
-void OriginalGrid::OnSize(wxSizeEvent &) {
-	AdjustScrollbar();
-	Refresh(false);
+void OriginalGrid::OnShow(wxShowEvent &event) {
+	event.Skip();
+
+	// The pane is only scrolled when the grid scrolls, so pick the grid's
+	// position up again when the pane is shown after having been hidden
+	if (event.IsShown() && context->subsGrid)
+		SyncScroll(context->subsGrid->GetScrollPosition());
 }
 
 void OriginalGrid::OnDPIChanged(wxDPIChangedEvent &event) {
@@ -212,9 +195,26 @@ void OriginalGrid::SelectPairedLine(int row, bool move_editor) {
 		context->subsEditBox->SetEditingOriginal(true);
 }
 
-void OriginalGrid::OnMouse(wxMouseEvent &event) {
-	if (!context->originalSubs || !context->originalSubs->IsOpen())
+void OriginalGrid::OnMouseWheel(wxMouseEvent &event) {
+	if (!context->subsGrid || !context->originalSubs || !context->originalSubs->IsOpen() ||
+		event.GetWheelRotation() == 0) {
+		event.Skip();
 		return;
+	}
+
+	int rotation = event.GetWheelRotation();
+
+	// Scrolling the pane scrolls the subtitle grid, which in turn moves the
+	// pane, so that both stay lined up
+	int lines = std::max(1, event.GetLinesPerAction());
+	context->subsGrid->ScrollTo(yPos - (rotation > 0 ? lines : -lines));
+}
+
+void OriginalGrid::OnMouse(wxMouseEvent &event) {
+	if (!context->originalSubs || !context->originalSubs->IsOpen()) {
+		event.Skip();
+		return;
+	}
 
 	int row = RowAtPoint(event.GetY());
 	if (row < 0 || (size_t)row >= context->originalSubs->Lines().size()) {
@@ -228,28 +228,9 @@ void OriginalGrid::OnMouse(wxMouseEvent &event) {
 	}
 }
 
-void OriginalGrid::PaintCell(wxDC &dc, wxString const& text, int x, int y, int width, bool right_aligned) {
-	if (text.empty())
-		return;
-
-	int available = width - 8;
-	if (right_aligned) {
-		wxString clipped = text;
-		while (!clipped.empty() && dc.GetTextExtent(clipped).GetWidth() > available)
-			clipped.RemoveLast();
-		dc.DrawText(clipped, x + width - 4 - dc.GetTextExtent(clipped).GetWidth(), y + 2);
-	}
-	else {
-		dc.SetClippingRegion(x, y, width, lineHeight);
-		dc.DrawText(text, x + 4, y + 2);
-		dc.DestroyClippingRegion();
-	}
-}
-
 void OriginalGrid::OnPaint(wxPaintEvent &) {
 	int w = 0, h = 0;
 	GetClientSize(&w, &h);
-	w -= scrollBar->GetSize().GetWidth();
 
 	wxAutoBufferedPaintDC dc(this);
 	dc.SetFont(font);
@@ -265,14 +246,9 @@ void OriginalGrid::OnPaint(wxPaintEvent &) {
 	dc.Clear();
 	dc.SetPen(*wxTRANSPARENT_PEN);
 
-	// Header
+	// The empty header keeps the pane's rows lined up with the grid's rows
 	dc.SetBrush(wxBrush(header));
 	dc.DrawRectangle(0, 0, w, lineHeight);
-	dc.SetTextForeground(text_standard);
-	PaintCell(dc, "#", 0, 0, width_number, true);
-	PaintCell(dc, _("Start"), width_number, 0, width_time, true);
-	PaintCell(dc, _("End"), width_number + width_time, 0, width_time, true);
-	PaintCell(dc, _("Text"), width_number + width_time * 2, 0, std::max(0, w - width_number - width_time * 2), false);
 
 	dc.SetPen(grid_pen);
 	dc.DrawLine(0, lineHeight, w, lineHeight);
@@ -282,12 +258,17 @@ void OriginalGrid::OnPaint(wxPaintEvent &) {
 	auto *active = context->selectionController->GetActiveLine();
 	int active_row = active ? active->Row : -1;
 
-	int n_draw = agi::util::mid(0, h / lineHeight, rows - yPos);
+	// Same rows as the subtitle grid draws, so that the two panes stay in step
+	int n_draw = agi::util::mid(0, h / lineHeight + 1, rows - yPos);
 	for (int i = 0; i < n_draw; ++i) {
 		int row = i + yPos;
+		if (row < 0 || row >= rows)
+			continue;
+
 		int y = (i + 1) * lineHeight;
 		bool is_active = row == active_row;
 
+		dc.SetPen(*wxTRANSPARENT_PEN);
 		if (is_active) {
 			dc.SetBrush(wxBrush(selection));
 			dc.DrawRectangle(0, y, w, lineHeight);
@@ -296,31 +277,17 @@ void OriginalGrid::OnPaint(wxPaintEvent &) {
 		else {
 			dc.SetTextForeground(text_standard);
 		}
-		dc.SetPen(*wxTRANSPARENT_PEN);
 
-		wxString number = wxString::Format("%d", row + 1);
-		PaintCell(dc, number, 0, y, width_number, true);
-
-		if (row < (int)lines.size()) {
-			AssDialogue *line = lines[row];
-			PaintCell(dc, to_wx(line->Start.GetAssFormatted()), width_number, y, width_time, true);
-			PaintCell(dc, to_wx(line->End.GetAssFormatted()), width_number + width_time, y, width_time, true);
-
-			auto text = to_wx(rtl::ToPlainText(line->Text.get(), false));
-			bool rtl = rtl::IsRTL(line->Text.get());
-			PaintCell(dc, text, width_number + width_time * 2, y,
-				std::max(0, w - width_number - width_time * 2), rtl);
-		}
+		// The text is drawn left aligned and untransformed, exactly like the
+		// subtitle grid draws it, so that the two panes can be compared line by
+		// line
+		auto text = to_wx(lines[row]->Text.get());
+		if (!text.empty())
+			dc.DrawText(text, 4, y + 2);
 
 		dc.SetPen(grid_pen);
 		dc.DrawLine(0, y + lineHeight, w, y + lineHeight);
 	}
-
-	// Vertical separators
-	dc.SetPen(grid_pen);
-	dc.DrawLine(width_number, 0, width_number, (n_draw + 1) * lineHeight);
-	dc.DrawLine(width_number + width_time, 0, width_number + width_time, (n_draw + 1) * lineHeight);
-	dc.DrawLine(width_number + width_time * 2, 0, width_number + width_time * 2, (n_draw + 1) * lineHeight);
 
 	if (rows == 0) {
 		dc.SetTextForeground(text_standard);

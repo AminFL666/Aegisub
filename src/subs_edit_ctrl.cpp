@@ -48,6 +48,8 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <algorithm>
+#include <cmath>
 #include <functional>
 
 #include <wx/clipbrd.h>
@@ -235,12 +237,24 @@ void SubsTextEditCtrl::SetSyntaxStyle(int id, wxFont &font, std::string const& n
 		StyleSetBackground(id, default_background);
 }
 
-void SubsTextEditCtrl::SetStyles() {
+/// How much larger than the size set in the preferences the text box is drawn
+constexpr double edit_box_font_scale = 1.5;
+
+wxFont EditBoxFont() {
 	wxFont font = *wxNORMAL_FONT;
 	font.SetEncoding(wxFONTENCODING_DEFAULT); // this solves problems with some fonts not working properly
 	wxString fontname = FontFace("Subtitle/Edit Box");
 	if (!fontname.empty()) font.SetFaceName(fontname);
-	font.SetPointSize(OPT_GET("Subtitle/Edit Box/Font Size")->GetInt());
+
+	// The text box is read and typed into constantly, so it uses a larger
+	// size than the one set in the preferences
+	auto size = OPT_GET("Subtitle/Edit Box/Font Size")->GetInt();
+	font.SetPointSize(std::max(1, int(std::lround(size * edit_box_font_scale))));
+	return font;
+}
+
+void SubsTextEditCtrl::SetStyles() {
+	wxFont font = EditBoxFont();
 
 	auto default_background = to_wx(OPT_GET("Colour/Subtitle/Background")->GetColor());
 

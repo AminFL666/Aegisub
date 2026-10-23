@@ -34,6 +34,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <wx/font.h>
 #include <wx/stc/stc.h>
 
 class Thesaurus;
@@ -42,6 +43,13 @@ namespace agi {
 	struct Context;
 	namespace ass { struct DialogueToken; }
 }
+
+/// @brief The font the subtitle text box is drawn with
+///
+/// This is the font from the preferences, enlarged so that the text is
+/// comfortable to read while typing. The right-to-left editor in the same
+/// box uses it as well, so that both editors look the same.
+wxFont EditBoxFont();
 
 /// @class SubsTextEditCtrl
 /// @brief A Scintilla control with spell checking and syntax highlighting

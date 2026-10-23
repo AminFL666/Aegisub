@@ -56,9 +56,19 @@ $gitHash = git -C $repositoryRootPath rev-parse --short HEAD 2>$null
 $gitVersionString = $gitRevision, $gitBranch, $gitHash -join '-'
 $exactGitTag = git -C $repositoryRootPath describe --exact-match --tags 2>$null
 
-if ($gitVersionString -eq $version['BUILD_GIT_VERSION_STRING']) {
+# Only short circuit when the header is complete, as older versions of this
+# script could leave RESOURCE_BASE_VERSION out when the repository had no tags
+if ($gitVersionString -eq $version['BUILD_GIT_VERSION_STRING'] -and
+  $version.ContainsKey('RESOURCE_BASE_VERSION')) {
   exit 0
 }
+
+# Defaults for a repository with no version tags, such as a fork. This mirrors
+# tools/version.sh, which always defines these and so never fails the build.
+# Any tag found below overrides them.
+$version['TAGGED_RELEASE'] = $false
+$version['INSTALLER_VERSION'] = '0.0.0'
+$version['RESOURCE_BASE_VERSION'] = @(0, 0, 0)
 
 if ($exactGitTag -match $semVerMatch) {
   $version['TAGGED_RELEASE'] = $true

@@ -71,6 +71,16 @@
 #include <wx/textctrl.h>
 #include <wx/spinctrl.h>
 
+#ifdef __WXMSW__
+#include <wx/msw/wrapwin.h>
+// PARAFORMAT2, used to set the paragraph direction below, is only declared
+// from RichEdit 2.0 onwards
+#ifndef _RICHEDIT_VER
+#define _RICHEDIT_VER 0x0200
+#endif
+#include <richedit.h>
+#endif
+
 namespace {
 
 /// Work around wxGTK's fondness for generating events from ChangeValue
@@ -212,6 +222,10 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		wxBORDER_SUNKEN | wxTE_MULTILINE | wxTE_RICH2 | wxTE_RIGHT);
 	rtl_edit->SetToolTip(_("Right-to-left text editor. Line breaks are shown as real line breaks."));
 	Bind(wxEVT_TEXT, &SubsEditBox::OnRtlEdit, this, rtl_edit->GetId());
+	rtl_edit->Bind(wxEVT_KEY_DOWN, &SubsEditBox::OnRtlKeyDown, this);
+	// Same font as the left-to-right editor, so that both look the same
+	rtl_edit->SetFont(EditBoxFont());
+	ApplyRtlParagraph();
 
 	secondary_editor = new wxTextCtrl(this, -1, "", wxDefaultPosition, FromDIP(wxSize(300,50)), wxBORDER_SUNKEN | wxTE_MULTILINE | wxTE_READONLY);
 
@@ -252,6 +266,8 @@ SubsEditBox::SubsEditBox(wxWindow *parent, agi::Context *context)
 		context->selectionController->AddSelectionListener(&SubsEditBox::OnSelectedSetChanged, this),
 		context->initialLineState->AddChangeListener(&SubsEditBox::OnLineInitialTextChanged, this),
 		context->originalSubs->AddChangeListener(&SubsEditBox::OnOriginalSubsChanged, this),
+		OPT_SUB("Subtitle/Edit Box/Font Face", [this] { if (rtl_edit) rtl_edit->SetFont(EditBoxFont()); }),
+		OPT_SUB("Subtitle/Edit Box/Font Size", [this] { if (rtl_edit) rtl_edit->SetFont(EditBoxFont()); }),
 	 });
 
 	current_file_direction = rtl::DetectMajority(*c->ass);
@@ -780,18 +796,31 @@ void SubsEditBox::SetTextDirection(bool rtl) {
 	if (rtl) {
 		sizer->Show(edit_ctrl, false);
 		sizer->Show(rtl_edit, true);
-		context->textSelectionController->SetControl(nullptr);
+		c->textSelectionController->SetControl(nullptr);
 		rtl_edit->SetFocus();
 	}
 	else {
 		sizer->Show(rtl_edit, false);
 		sizer->Show(edit_ctrl, true);
-		context->textSelectionController->SetControl(edit_ctrl);
+		c->textSelectionController->SetControl(edit_ctrl);
 		edit_ctrl->SetFocus();
 	}
 
 	sizer->Layout();
 	Thaw();
+}
+
+namespace {
+/// \brief The text to show in the editor for a line
+///
+/// A line with no text at all is stored with a single zero-width space so that
+/// it is not dropped when the file is saved. It should still look empty here,
+/// and typing into it should not end up after an invisible character.
+std::string ForDisplay(std::string text) {
+	if (text == "\xE2\x80\x8B")
+		return std::string();
+	return text;
+}
 }
 
 void SubsEditBox::SetEditorText(std::string const& text) {
@@ -821,6 +850,7 @@ void SubsEditBox::SetEditorText(std::string const& text) {
 
 	if (rtl_edit->GetValue() != to_wx(display)) {
 		rtl_edit->ChangeValue(to_wx(display));
+		ApplyRtlParagraph();
 		rtl_edit->SetInsertionPointEnd();
 	}
 }
@@ -834,6 +864,8 @@ void SubsEditBox::RefreshEditorText() {
 	else if (line) {
 		text = line->Text.get();
 	}
+
+	text = ForDisplay(std::move(text));
 
 	rtl::Direction dir = rtl::Detect(text);
 	if (!rtl::HasStrongDirection(text))
@@ -896,6 +928,62 @@ void SubsEditBox::OnRtlEdit(wxCommandEvent &) {
 		CommitText(_("modify text"));
 		UpdateCharacterCount(text);
 	}
+}
+
+void SubsEditBox::OnRtlKeyDown(wxKeyEvent &event) {
+	int key = event.GetKeyCode();
+
+	// Moving past the last line should put the caret at the end of the text,
+	// and moving past the first line at its beginning, the same as in the
+	// left-to-right editor. The native control only does this when the caret
+	// movement is not complicated by the bidirectional layout, so it is done
+	// here explicitly.
+	if (!event.CmdDown() && !event.AltDown() && (key == WXK_UP || key == WXK_DOWN)) {
+		long x, y;
+		rtl_edit->PositionToXY(rtl_edit->GetInsertionPoint(), &x, &y);
+		long lines = rtl_edit->GetNumberOfLines();
+
+		if (key == WXK_DOWN && y >= lines - 1) {
+			rtl_edit->SetInsertionPointEnd();
+			return;
+		}
+		if (key == WXK_UP && y <= 0) {
+			rtl_edit->SetInsertionPoint(0);
+			return;
+		}
+	}
+
+	event.Skip();
+}
+
+void SubsEditBox::ApplyRtlParagraph() {
+#ifdef __WXMSW__
+	if (!rtl_edit)
+		return;
+
+	auto hwnd = static_cast<HWND>(rtl_edit->GetHWND());
+	if (!hwnd)
+		return;
+
+	// wxWidgets has no style for the paragraph direction, so ask RichEdit
+	// directly. With right-to-left paragraphs the trailing neutral characters
+	// of a line, such as the dots of an ellipsis, are ordered right to left as
+	// well, which keeps them at the end of the line where they belong.
+	PARAFORMAT2 format{};
+	format.cbSize = sizeof(PARAFORMAT2);
+	format.dwMask = PFM_RTLPARA;
+	format.wEffects = PFE_RTLPARA;
+
+	// The message applies to the selection, so select everything and then put
+	// the caret back where it was
+	long from = 0, to = 0;
+	rtl_edit->GetSelection(&from, &to);
+	rtl_edit->Freeze();
+	rtl_edit->SelectAll();
+	::SendMessage(hwnd, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&format));
+	rtl_edit->SetSelection(from, to);
+	rtl_edit->Thaw();
+#endif
 }
 
 void SubsEditBox::OnOriginalSubsChanged() {

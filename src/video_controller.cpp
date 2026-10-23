@@ -50,6 +50,7 @@
 VideoController::VideoController(agi::Context *c)
 : context(c)
 , playAudioOnStep(OPT_GET("Audio/Plays When Stepping Video"))
+, pauseOnLine(OPT_GET("Video/Pause on Line"))
 , connections(agi::signal::make_vector({
 	context->ass->AddCommitListener(&VideoController::OnSubtitlesCommit, this),
 	context->project->AddVideoProviderListener(&VideoController::OnNewVideoProvider, this),
@@ -161,6 +162,7 @@ void VideoController::Play() {
 
 	start_ms = TimeAtFrame(frame_n);
 	end_frame = provider->GetFrameCount() - 1;
+	last_play_time = start_ms;
 
 	context->audioController->PlayToEnd(start_ms);
 
@@ -180,6 +182,7 @@ void VideoController::PlayLine() {
 	int startFrame = FrameAtTime(context->selectionController->GetActiveLine()->Start, agi::vfr::START);
 	start_ms = TimeAtFrame(startFrame);
 	end_frame = FrameAtTime(context->selectionController->GetActiveLine()->End, agi::vfr::END) + 1;
+	last_play_time = start_ms;
 
 	JumpToFrame(startFrame);
 
@@ -196,7 +199,13 @@ void VideoController::Stop() {
 
 void VideoController::OnPlayTimer(wxTimerEvent &) {
 	using namespace std::chrono;
-	int next_frame = FrameAtTime(start_ms + duration_cast<milliseconds>(steady_clock::now() - playback_start_time).count());
+	int time = start_ms + duration_cast<milliseconds>(steady_clock::now() - playback_start_time).count();
+
+	// A subtitle may have appeared since the last tick
+	if (time > last_play_time && PauseOnLineStart(time))
+		return;
+
+	int next_frame = FrameAtTime(time);
 	if (next_frame == frame_n) return;
 
 	if (next_frame >= end_frame)
@@ -206,6 +215,43 @@ void VideoController::OnPlayTimer(wxTimerEvent &) {
 		RequestFrame();
 		Seek(frame_n);
 	}
+}
+
+bool VideoController::PauseOnLineStart(int time) {
+	int previous = last_play_time;
+	last_play_time = time;
+
+	if (!pauseOnLine->GetBool())
+		return false;
+
+	// The line which appeared during the last tick. Where several start at
+	// the same time the first one in the file is taken, so that playing on
+	// afterwards walks through all of them.
+	AssDialogue *started = nullptr;
+	for (auto& line : context->ass->Events) {
+		if (line.Comment)
+			continue;
+
+		int start = (int)line.Start;
+		if (start > previous && start <= time && (!started || start < (int)started->Start))
+			started = &line;
+	}
+
+	if (!started)
+		return false;
+
+	// Stop before seeking, as seeking restarts playback when it is running
+	Stop();
+	context->selectionController->SetSelectionAndActive(Selection{started}, started);
+
+	// Seek after selecting, as selecting may seek as well when the option to
+	// follow the active line is enabled, and this is the position wanted
+	JumpToFrame(FrameAtTime(started->Start, agi::vfr::START));
+
+	// Playback is over, so the time the next one would start from is the
+	// beginning of the line which was just reached
+	last_play_time = (int)started->Start;
+	return true;
 }
 
 double VideoController::GetARFromType(AspectRatio type) const {

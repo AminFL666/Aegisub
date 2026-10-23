@@ -35,6 +35,7 @@
 #include "provider_file_formats.h"
 #include "selection_controller.h"
 #include "subs_controller.h"
+#include "subs_original.h"
 #include "utils.h"
 #include "video_controller.h"
 #include "video_display.h"
@@ -383,7 +384,17 @@ bool Project::DoLoadVideo(agi::fs::path const& path) {
 	AnnounceVideoProviderModified(video_provider.get());
 
 	UpdateVideoProperties(context->ass.get(), video_provider.get(), context->parent);
-	video_provider->LoadSubtitles(context->ass.get());
+
+	// The original subtitle is drawn together with the current one, so the
+	// merged file is what has to be loaded here; loading only the current file
+	// would hide the original until something else reloaded the subtitles
+	if (context->originalSubs && context->originalSubs->IsOpen()) {
+		auto merged = context->originalSubs->MakePreviewFile();
+		video_provider->LoadSubtitles(merged.get());
+	}
+	else {
+		video_provider->LoadSubtitles(context->ass.get());
+	}
 
 	timecodes = video_provider->GetFPS();
 	keyframes = video_provider->GetKeyFrames();
