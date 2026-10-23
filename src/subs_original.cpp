@@ -52,6 +52,8 @@
 #include <boost/algorithm/string/case_conv.hpp>
 
 #include <algorithm>
+#include <limits>
+#include <unordered_set>
 
 #include <wx/intl.h>
 #include <wx/msgdlg.h>
@@ -75,6 +77,129 @@ std::string EnsureNonEmpty(std::string text) {
 	if (text.empty())
 		return placeholder_text;
 	return text;
+}
+
+/// @brief Move a position in a UTF-8 string to the start of a character
+size_t SnapToCharacter(std::string const& text, size_t pos) {
+	while (pos > 0 && pos < text.size() &&
+		(static_cast<unsigned char>(text[pos]) & 0xC0) == 0x80)
+		++pos;
+	return pos;
+}
+
+/// @brief Move a position out of an override block
+///
+/// Cutting through a {} block would leave half of its tags on either side of
+/// the cut, so the position is moved to just after the block instead.
+size_t LeaveOverrideBlock(std::string const& text, size_t pos) {
+	auto open = text.rfind('{', pos);
+	if (open == std::string::npos)
+		return pos;
+
+	auto close = text.find('}', open);
+	if (close != std::string::npos && pos <= close)
+		return close + 1;
+
+	return pos;
+}
+
+/// @brief Split the text of an original line into several lines
+/// @param text Raw ASS text
+/// @param count Number of pieces to split it into
+/// @return The pieces, which are never more than @a count long
+///
+/// The line breaks of the text are the natural place to cut, as the
+/// translation already ends a line there. When there are not enough of them
+/// the text is cut at a word boundary near an equal share of its length.
+std::vector<std::string> SplitText(std::string const& text, size_t count) {
+	std::vector<std::string> pieces;
+	if (count <= 1) {
+		pieces.push_back(text);
+		return pieces;
+	}
+
+	// Positions just after a line break
+	std::vector<size_t> breaks;
+	for (size_t i = 0; i + 1 < text.size(); ++i) {
+		if (text[i] == '\\' && (text[i + 1] == 'N' || text[i + 1] == 'n'))
+			breaks.push_back(i + 2);
+	}
+
+	// Cut at line breaks when there are enough of them
+	std::vector<size_t> cuts;
+	if (breaks.size() >= count - 1) {
+		for (size_t i = 1; i < count; ++i) {
+			size_t target = text.size() * i / count;
+			size_t from = cuts.empty() ? 0 : cuts.back();
+			size_t best = 0, best_dist = std::numeric_limits<size_t>::max();
+			for (auto pos : breaks) {
+				if (pos <= from)
+					continue;
+
+				size_t dist = pos > target ? pos - target : target - pos;
+				if (dist < best_dist) {
+					best_dist = dist;
+					best = pos;
+				}
+			}
+			if (best == 0)
+				break;
+			cuts.push_back(best);
+		}
+	}
+
+	// Otherwise cut at a word boundary near an equal share of the text
+	if (cuts.size() < count - 1) {
+		cuts.clear();
+		for (size_t i = 1; i < count; ++i) {
+			size_t from = cuts.empty() ? 0 : cuts.back();
+			size_t target = LeaveOverrideBlock(text, SnapToCharacter(text, text.size() * i / count));
+
+			// Look for a space near the target position
+			size_t window = text.size() / 8 + 1;
+			size_t best = 0;
+			for (size_t d = 0; d <= window; ++d) {
+				if (target > d && target - d > from && text[target - d - 1] == ' ') {
+					best = target - d;
+					break;
+				}
+				if (target + d < text.size() && text[target + d] == ' ') {
+					best = target + d + 1;
+					break;
+				}
+			}
+
+			// The space which was found may be inside an override block as
+			// well, so leave the block before cutting there
+			if (best)
+				best = LeaveOverrideBlock(text, best);
+
+			if (best <= from || best >= text.size())
+				best = LeaveOverrideBlock(text, SnapToCharacter(text, text.size() * i / count));
+			if (best <= from || best > text.size())
+				best = text.size() * i / count;
+
+			cuts.push_back(best);
+		}
+	}
+
+	size_t start = 0;
+	for (auto cut : cuts) {
+		pieces.push_back(text.substr(start, cut - start));
+		start = cut;
+	}
+	pieces.push_back(text.substr(start));
+
+	for (auto& piece : pieces) {
+		// Tidy up the space the cut left behind, without touching the tags
+		auto first = piece.find_first_not_of(" \t");
+		if (first == std::string::npos)
+			piece.clear();
+		else
+			piece = piece.substr(first, piece.find_last_not_of(" \t") - first + 1);
+	}
+
+	return pieces;
 }
 
 } // namespace
@@ -378,39 +503,88 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 
 	syncing = true;
 
+	// The pairing as it was before this sync, by row
+	std::vector<AssDialogue*> const old_lines = lines;
+	std::vector<int> const old_ids = line_ids;
+
+	// Originals which are already spoken for, either because their own line
+	// is still there or because they have been given to another line below
+	std::unordered_set<AssDialogue*> claimed;
+
+	auto const& current = context->ass->Events;
+
+	// Row of each line of the current file
+	std::unordered_map<int, int> current_rows;
+	{
+		int row = 0;
+		for (auto const& cur : current)
+			current_rows.emplace(cur.Id, row++);
+	}
+
+	// Originals whose line is still in the current file keep it
+	for (size_t i = 0; i < old_lines.size() && i < old_ids.size(); ++i) {
+		if (current_rows.count(old_ids[i]))
+			claimed.insert(old_lines[i]);
+	}
+
+	// Lines which a tool or a script has split into several. Splitting a line
+	// uses several lines where there was one, so it can only have happened
+	// when the number of lines is not the same as before; checking this keeps
+	// the common case of a timing change from searching through the file.
+	std::unordered_map<int, AssDialogue*> pieces;
+	if (!initial && current.size() != old_lines.size())
+		SplitFollowCurrent(old_lines, old_ids, current_rows, claimed, pieces);
+
 	std::vector<AssDialogue*> new_lines;
 	std::vector<int> new_ids;
 	std::unordered_map<int, AssDialogue*> new_by_id;
 	std::vector<AssDialogue*> to_delete;
 
-	new_lines.reserve(context->ass->Events.size());
-	new_ids.reserve(context->ass->Events.size());
+	new_lines.reserve(current.size());
+	new_ids.reserve(current.size());
 
-	for (auto const& cur : context->ass->Events) {
+	int row = 0;
+	for (auto const& cur : current) {
 		AssDialogue *orig = nullptr;
 
-		auto paired = by_id.find(cur.Id);
-		if (paired != by_id.end()) {
-			orig = paired->second;
-			by_id.erase(paired);
+		auto piece = pieces.find(cur.Id);
+		if (piece != pieces.end()) {
+			orig = piece->second;
 		}
 		else {
-			auto resurrected = removed.find(cur.Id);
-			if (resurrected != removed.end()) {
-				// The line was deleted and is back, most likely because the
-				// deletion was undone, so restore its text
-				orig = new AssDialogue;
-				orig->Text = EnsureNonEmpty(resurrected->second);
-				removed.erase(resurrected);
-			}
-			else if (!unpaired.empty()) {
-				// The original has more lines than the current file had before
-				orig = unpaired.front();
-				unpaired.erase(unpaired.begin());
+			auto paired = by_id.find(cur.Id);
+			if (paired != by_id.end()) {
+				orig = paired->second;
+				claimed.insert(orig);
 			}
 			else {
-				orig = new AssDialogue;
-				orig->Text = placeholder_text;
+				auto resurrected = removed.find(cur.Id);
+				if (resurrected != removed.end()) {
+					// The line was deleted and is back, most likely because the
+					// deletion was undone, so restore its text
+					orig = new AssDialogue;
+					orig->Text = EnsureNonEmpty(resurrected->second);
+					removed.erase(resurrected);
+				}
+				else if (row < (int)old_lines.size() && !claimed.count(old_lines[row])) {
+					// The line which used to sit here is gone and was replaced
+					// by one with a new id, which is what a script or a tool
+					// rewriting lines does. Keeping the text paired with the
+					// row stops the original from being wiped by a script
+					// which only meant to change timing.
+					orig = old_lines[row];
+				}
+				else if (!unpaired.empty()) {
+					// The original has more lines than the current file had
+					// before
+					orig = unpaired.front();
+					unpaired.erase(unpaired.begin());
+				}
+				else {
+					orig = new AssDialogue;
+					orig->Text = placeholder_text;
+				}
+				claimed.insert(orig);
 			}
 		}
 
@@ -426,6 +600,8 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 		new_lines.push_back(orig);
 		new_ids.push_back(cur.Id);
 		new_by_id[cur.Id] = orig;
+
+		++row;
 	}
 
 	// Whatever is left without a partner either becomes the tail of the
@@ -436,6 +612,9 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 	}
 	else {
 		for (auto const& pair : by_id) {
+			if (claimed.count(pair.second))
+				continue;
+
 			if (keep_orphans) {
 				unpaired.push_back(pair.second);
 				continue;
@@ -464,11 +643,11 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 	for (auto *line : unpaired)
 		file->Events.push_back(*line);
 
-	int row = 0;
+	int new_row = 0;
 	for (auto *line : lines)
-		line->Row = row++;
+		line->Row = new_row++;
 	for (auto *line : unpaired)
-		line->Row = row++;
+		line->Row = new_row++;
 
 	for (auto *line : to_delete)
 		delete line;
@@ -480,6 +659,118 @@ void OriginalSubsController::SyncToCurrentFile(bool initial) {
 
 	UpdateDirection();
 	AnnounceChange();
+}
+
+void OriginalSubsController::SplitFollowCurrent(
+	std::vector<AssDialogue*> const& old_lines,
+	std::vector<int> const& old_ids,
+	std::unordered_map<int, int> const& current_rows,
+	std::unordered_set<AssDialogue*> &claimed,
+	std::unordered_map<int, AssDialogue*> &pieces)
+{
+	auto const& current = context->ass->Events;
+
+	// The lines the current file had before this sync
+	std::unordered_set<int> previous_ids(old_ids.begin(), old_ids.end());
+
+	// The lines of the current file which did not exist before this sync, in
+	// the order they appear in
+	struct NewLine {
+		AssDialogue const *line;
+		int row;
+	};
+	std::vector<NewLine> new_lines;
+	{
+		int row = 0;
+		for (auto const& cur : current) {
+			if (!previous_ids.count(cur.Id))
+				new_lines.push_back({&cur, row});
+			++row;
+		}
+	}
+
+	if (new_lines.size() < 2)
+		return;
+
+	// Rows of the lines of the current file which are already taken
+	std::unordered_set<int> taken_rows;
+
+	// Timestamps are stored with a resolution of a millisecond but compared
+	// with a centisecond one, so allow for the rounding
+	constexpr int tolerance = 20;
+
+	for (size_t i = 0; i < old_lines.size() && i < old_ids.size(); ++i) {
+		// A line which is still there has not been split
+		if (current_rows.count(old_ids[i]))
+			continue;
+
+		AssDialogue *parent = old_lines[i];
+		if (!parent || claimed.count(parent) || parent->Text.get() == placeholder_text)
+			continue;
+
+		int parent_start = (int)parent->Start;
+		int parent_end = (int)parent->End;
+
+		// The new lines of the current file which were carved out of the time
+		// range of this one, which are the pieces it was split into
+		std::vector<AssDialogue const*> found;
+		std::vector<int> found_rows;
+		int last_row = -1;
+		for (auto const& candidate : new_lines) {
+			int cur_row = candidate.row;
+			auto const& cur = *candidate.line;
+
+			if (taken_rows.count(cur_row)) {
+				continue;
+			}
+			if ((int)cur.Start < parent_start - tolerance || (int)cur.End > parent_end + tolerance) {
+				continue;
+			}
+			if (!found.empty() && cur_row != last_row + 1) {
+				// Pieces have to be next to each other
+				continue;
+			}
+
+			found.push_back(&cur);
+			found_rows.push_back(cur_row);
+			last_row = cur_row;
+		}
+
+		if (found.size() < 2)
+			continue;
+
+		// The pieces have to add up to most of the line they came from, or
+		// this is a new line which merely happens to be timed inside this one
+		int piece_start = (int)found.front()->Start;
+		int piece_end = (int)found.back()->End;
+		for (auto *cur : found) {
+			piece_start = std::min(piece_start, (int)cur->Start);
+			piece_end = std::max(piece_end, (int)cur->End);
+		}
+		if (piece_end - piece_start < (parent_end - parent_start) / 2)
+			continue;
+
+		auto texts = SplitText(parent->Text.get(), found.size());
+		if (texts.size() != found.size())
+			continue;
+
+		for (size_t j = 0; j < found.size(); ++j) {
+			AssDialogue *piece = parent;
+			if (j > 0) {
+				piece = new AssDialogue;
+				piece->Style = "Original";
+			}
+
+			piece->Text = EnsureNonEmpty(texts[j]);
+			claimed.insert(piece);
+			pieces[found[j]->Id] = piece;
+		}
+
+		taken_rows.insert(found_rows.begin(), found_rows.end());
+
+		LOG_D("subs/original") << "Split original line " << i << " into "
+			<< found.size() << " pieces to follow the current file";
+	}
 }
 
 void OriginalSubsController::EnsureStyle() {

@@ -637,6 +637,7 @@
 		"Last LayoutRes Mismatch Choice" : 0,
 		"Open Audio" : true,
 		"Overscan Mask" : false,
+		"Pause on Line" : false,
 		"Provider" : "ffmpegsource",
 		"Slider" : {
 			"Fast Jump Step" : 10,

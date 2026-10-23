@@ -66,8 +66,10 @@
 #include <algorithm>
 #include <libaegisub/log.h>
 
+#include <wx/dcclient.h>
 #include <wx/dnd.h>
 #include <wx/msgdlg.h>
+#include <wx/settings.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/statline.h>
@@ -76,6 +78,48 @@
 
 enum {
 	ID_APP_TIMER_STATUSCLEAR = 12002
+};
+
+/// @class SubtitlesSplitter
+/// @brief The splitter between the current and the original subtitles
+///
+/// wxWidgets draws the sash as a two-tone three-dimensional groove, which
+/// reads as two thin lines between the panes. This draws a single line
+/// instead, so that the two panes are simply separated by one bold rule.
+class SubtitlesSplitter final : public wxSplitterWindow {
+public:
+	/// wxSP_3DSASH is what gives the splitter a sash at all: without it the
+	/// sash has no width, so there would be nothing to draw and nothing to
+	/// grab with the mouse. Only the way the sash is drawn is replaced here.
+	SubtitlesSplitter(wxWindow *parent, wxWindowID id)
+	: wxSplitterWindow(parent, id, wxDefaultPosition, wxDefaultSize,
+		wxSP_LIVE_UPDATE | wxSP_3DSASH | wxSP_NOBORDER)
+	{
+	}
+
+	void DrawSash(wxDC& dc) override {
+		if (!IsSplit() || IsSashInvisible())
+			return;
+
+		const int position = GetSashPosition();
+		const int width = GetSashSize();
+		const int height = GetClientSize().GetHeight();
+		if (width <= 0)
+			return;
+
+		// A quiet gutter in the colour of the panes, so that nothing of the
+		// sash shows apart from the line drawn in the middle of it
+		dc.SetPen(*wxTRANSPARENT_PEN);
+		dc.SetBrush(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW)));
+		dc.DrawRectangle(position, 0, width, height);
+
+		// One bold line, rather than the two thin ones of the native sash
+		const int thickness = std::min(width, std::max(1, FromDIP(2)));
+		const int from = position + (width - thickness) / 2;
+
+		dc.SetBrush(wxBrush(wxSystemSettings::GetColour(wxSYS_COLOUR_3DSHADOW)));
+		dc.DrawRectangle(from, 0, thickness, height);
+	}
 };
 
 #ifdef WITH_STARTUPLOG
@@ -200,8 +244,7 @@ void FrameMain::InitContents() {
 	auto subsSizer = new wxBoxSizer(wxHORIZONTAL);
 
 	StartupLog("Create subtitles splitter");
-	subsSplitter = new wxSplitterWindow(subsPanel, -1, wxDefaultPosition, wxDefaultSize,
-		wxSP_LIVE_UPDATE | wxSP_3DSASH | wxSP_NOBORDER);
+	subsSplitter = new SubtitlesSplitter(subsPanel, -1);
 	subsSplitter->SetMinimumPaneSize(FromDIP(80));
 	subsSplitter->SetSashGravity(0.5);
 

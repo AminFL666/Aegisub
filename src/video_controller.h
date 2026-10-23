@@ -100,9 +100,23 @@ class VideoController final : public wxEvtHandler {
 	/// Cached option for audio playing when frame stepping
 	const agi::OptionValue* playAudioOnStep;
 
+	/// Cached option for stopping playback when a subtitle appears
+	const agi::OptionValue* pauseOnLine;
+
+	/// The time the last playback tick was at, used to notice a subtitle
+	/// appearing during playback
+	int last_play_time = 0;
+
 	std::vector<agi::signal::Connection> connections;
 
 	void OnPlayTimer(wxTimerEvent &event);
+
+	/// @brief Stop at the beginning of a subtitle which just appeared
+	/// @param time Current playback time in milliseconds
+	/// @return true if playback was stopped
+	///
+	/// Only does anything when the "Pause on Line" option is enabled.
+	bool PauseOnLineStart(int time);
 
 	void OnVideoError(VideoProviderErrorEvent const& err);
 	void OnSubtitlesError(SubtitlesProviderErrorEvent const& err);

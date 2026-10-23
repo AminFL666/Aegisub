@@ -42,6 +42,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class AssDialogue;
@@ -189,6 +190,23 @@ private:
 	/// @brief Make the original follow the current file
 	/// @param initial Pair every line instead of only the ones which changed
 	void SyncToCurrentFile(bool initial);
+
+	/// @brief Follow the current file where it has split a line in several
+	/// @param old_lines Pairing before this sync, by row
+	/// @param old_ids Line ids of old_lines
+	/// @param current_rows Row of each line id of the current file
+	/// @param claimed Original lines which already have a line of their own
+	/// @param pieces Current line id -> original line to use for it
+	///
+	/// A tool or a script which splits a line replaces it with several new
+	/// lines, so the original line loses the line it was paired with. Its
+	/// text is split over the new lines, which keeps the translation lined
+	/// up with the file it belongs to.
+	void SplitFollowCurrent(std::vector<AssDialogue*> const& old_lines,
+		std::vector<int> const& old_ids,
+		std::unordered_map<int, int> const& current_rows,
+		std::unordered_set<AssDialogue*> &claimed,
+		std::unordered_map<int, AssDialogue*> &pieces);
 
 	/// Commit listener for the current file
 	void OnCurrentCommit(int type);
